@@ -58,7 +58,7 @@ canvas {
   <div id="muteEl" style="color:#556">🔊</div>
 </div>
 <canvas id="c"></canvas>
-<div id="controls">WASD / STRZALKI — ruch &nbsp;&nbsp; SPACJA — bomba &nbsp;&nbsp; ESC — pauza &nbsp;&nbsp; M — mute &nbsp;&nbsp; R — restart</div>
+<div id="controls">WASD / STRZALKI — ruch &nbsp;&nbsp; SPACJA — bomba/detonator &nbsp;&nbsp; ESC — pauza &nbsp;&nbsp; M — mute &nbsp;&nbsp; R — restart</div>
 
 <script>
 // ════════════════════════════════════════════════════════════════
@@ -90,6 +90,22 @@ const PU_RANGE  = 'range';
 const PU_SPEED  = 'speed';
 const PU_LIFE   = 'life';
 const PU_BOMBS  = 'bombs';
+const PU_SHIELD = 'shield';
+const PU_GHOST  = 'ghost';
+const PU_DETONATOR = 'detonator';
+const PU_MEGA   = 'mega';
+
+// New robot types
+const RT_GHOST   = 'ghost_robot';
+const RT_BOMBER  = 'bomber';
+const RT_SPLITTER= 'splitter';
+const RT_BOSS    = 'boss';
+
+// Map tile types (extended)
+const TELEPORT_A = 3;
+const TELEPORT_B = 4;
+const ICE        = 5;
+const SPIKES     = 6;
 
 // ════════════════════════════════════════════════════════════════
 //  SETUP
@@ -443,6 +459,15 @@ let bombsActive = 0;
 let keys = {};
 let lastTime = 0;
 
+// Phase 3 state
+let playerShield = false;
+let playerGhost = 0;       // timer — walk through crates
+let playerDetonator = false; // next bomb is manual detonation
+let playerMega = false;      // next bomb has full-range
+let detonatorBomb = null;    // ref to placed detonator bomb
+let teleportCooldown = 0;   // prevent teleport loops
+let spikesTimer = 0;        // global spike cycle timer
+
 function mkMap() {
   const m = [];
   for (let y=0; y<ROWS; y++) {
@@ -467,11 +492,15 @@ function mkPlayer() {
 
 function mkRobot(tx, ty, type=RT_BASIC) {
   const dirs = [{dx:1,dy:0},{dx:-1,dy:0},{dx:0,dy:1},{dx:0,dy:-1}];
-  const hp = type===RT_TANK ? 2 : 1;
-  return { x:tx*TILE, y:ty*TILE,
+  const hp = type===RT_BOSS ? 5 : type===RT_TANK ? 2 : type===RT_SPLITTER ? 1 : 1;
+  const r = { x:tx*TILE, y:ty*TILE,
            dir:dirs[Math.floor(Math.random()*4)],
            facing:1, frame:0, animT:0, alive:true,
            changeT:0, type, hp, hitFlash:0 };
+  if (type===RT_BOMBER) r.bombTimer = 3 + Math.random()*3;
+  if (type===RT_BOSS) r.attackTimer = 4 + Math.random()*2;
+  if (type===RT_SPLITTER) r.isMini = false;
+  return r;
 }
 
 function reset() {
@@ -483,6 +512,8 @@ function reset() {
   comboCount=0; comboTimer=0;
   bombs=[]; explosions=[]; powerups=[]; particles=[]; floatingTexts=[]; robotDebris=[];
   shake=0; shakeT=0;
+  playerShield=false; playerGhost=0; playerDetonator=false; playerMega=false;
+  detonatorBomb=null; teleportCooldown=0; spikesTimer=0; playerSlide=null;
   ensureAudio();
   startLevel();
 }
@@ -498,6 +529,14 @@ function robotsForLevel(lvl) {
   if (lvl >= 2) { const n = Math.min(1 + Math.floor((lvl-2)*0.3), 3); for (let i=0;i<n;i++) pool.push(RT_CHASER); }
   // Tanks from level 3
   if (lvl >= 3) { const n = Math.min(1 + Math.floor((lvl-3)*0.3), 2); for (let i=0;i<n;i++) pool.push(RT_TANK); }
+  // Ghost robots from level 4
+  if (lvl >= 4) { const n = Math.min(1 + Math.floor((lvl-4)*0.3), 2); for (let i=0;i<n;i++) pool.push(RT_GHOST); }
+  // Bomber robots from level 5
+  if (lvl >= 5) { const n = Math.min(1 + Math.floor((lvl-5)*0.25), 2); for (let i=0;i<n;i++) pool.push(RT_BOMBER); }
+  // Splitter robots from level 6
+  if (lvl >= 6) { const n = Math.min(1 + Math.floor((lvl-6)*0.2), 2); for (let i=0;i<n;i++) pool.push(RT_SPLITTER); }
+  // Boss every 5 levels
+  if (lvl >= 5 && lvl % 5 === 0) pool.push(RT_BOSS);
   return pool;
 }
 
@@ -517,17 +556,18 @@ function spawnPositions(count) {
 function startLevel() {
   level++;
   map = mkMap();
+  placeMapElements();
   player = mkPlayer();
   player.invince = 2.0; // brief invincibility on level start
   bombsActive = 0;
   bombs=[]; explosions=[]; powerups=[]; robotDebris=[];
+  detonatorBomb=null; teleportCooldown=0; spikesTimer=0;
 
   const types = robotsForLevel(level);
   const positions = spawnPositions(types.length);
   robots = types.map((type, i) => {
     const [tx, ty] = positions[i];
     const r = mkRobot(tx, ty, type);
-    // Scale speed with level
     return r;
   });
 
@@ -535,6 +575,46 @@ function startLevel() {
   state = 'levelintro';
   levelTimer = 2.0;
   hud();
+}
+
+function placeMapElements() {
+  // Collect free floor tiles (not in corners/safe zones)
+  const free = [];
+  for (let y=1;y<ROWS-1;y++) for (let x=1;x<COLS-1;x++) {
+    if (map[y][x]!==FLOOR) continue;
+    const corners = (x<=2&&y<=2)||(x>=COLS-3&&y<=2)||(x<=2&&y>=ROWS-3)||(x>=COLS-3&&y>=ROWS-3);
+    if (corners) continue;
+    free.push([x,y]);
+  }
+  // Shuffle
+  for (let i=free.length-1;i>0;i--) { const j=Math.floor(Math.random()*(i+1)); [free[i],free[j]]=[free[j],free[i]]; }
+  let idx=0;
+
+  // Teleports — pair, from level 3
+  if (level >= 3 && free.length >= idx+2) {
+    const [ax,ay] = free[idx++];
+    const [bx,by] = free[idx++];
+    map[ay][ax] = TELEPORT_A;
+    map[by][bx] = TELEPORT_B;
+  }
+
+  // Ice tiles — cluster from level 4
+  if (level >= 4) {
+    const iceCount = Math.min(3 + level, 12);
+    for (let i=0;i<iceCount && idx<free.length;i++) {
+      const [ix,iy] = free[idx++];
+      map[iy][ix] = ICE;
+    }
+  }
+
+  // Spike tiles — from level 5
+  if (level >= 5) {
+    const spikeCount = Math.min(2 + Math.floor(level*0.5), 8);
+    for (let i=0;i<spikeCount && idx<free.length;i++) {
+      const [sx,sy] = free[idx++];
+      map[sy][sx] = SPIKES;
+    }
+  }
 }
 
 function mkMap_density() {
@@ -548,7 +628,10 @@ function hud() {
   $lives.textContent = lives;
   $score.textContent = score;
   $robots.textContent = robots.filter(r=>r.alive).length;
-  $bomb.textContent = `${bombsActive}/${MAX_BOMBS}`;
+  let bombTxt = `${bombsActive}/${MAX_BOMBS}`;
+  if (playerDetonator) bombTxt += ' 🔴';
+  if (playerMega) bombTxt += ' 💀';
+  $bomb.textContent = bombTxt;
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -558,12 +641,25 @@ function tileOf(px,py){ return [Math.floor(px/TILE), Math.floor(py/TILE)]; }
 
 function hasBomb(tx,ty){ return bombs.some(b=>b.tx===tx&&b.ty===ty); }
 
-function solid(tx,ty,ignoreBombs=false) {
+function solid(tx,ty,ignoreBombs=false,isGhost=false) {
   if (tx<0||ty<0||tx>=COLS||ty>=ROWS) return true;
   const t = map[ty][tx];
-  if (t===WALL||t===CRATE) return true;
+  if (t===WALL) return true;
+  if (t===CRATE && !isGhost) return true;
   if (!ignoreBombs && hasBomb(tx,ty)) {
-    // bomb is passable for a short grace period after placement
+    const b = bombs.find(b=>b.tx===tx&&b.ty===ty);
+    if (b && b.grace > 0) return false;
+    return true;
+  }
+  return false;
+}
+
+function solidForRobot(tx,ty,robotType) {
+  if (tx<0||ty<0||tx>=COLS||ty>=ROWS) return true;
+  const t = map[ty][tx];
+  if (t===WALL) return true;
+  if (t===CRATE && robotType!==RT_GHOST) return true;
+  if (hasBomb(tx,ty)) {
     const b = bombs.find(b=>b.tx===tx&&b.ty===ty);
     if (b && b.grace > 0) return false;
     return true;
@@ -572,8 +668,8 @@ function solid(tx,ty,ignoreBombs=false) {
 }
 
 // Check if a hitbox rectangle (top-left px,py, size in tile-fractions) is clear
-function canGo(px,py, size=0.7) {
-  const pad = TILE*(1-size)/2 + 1;  // inset from tile edge
+function canGo(px,py, size=0.7, isGhost=false) {
+  const pad = TILE*(1-size)/2 + 1;
   const s   = TILE - pad*2 - 1;
   const corners = [
     [px+pad,    py+pad],
@@ -583,7 +679,23 @@ function canGo(px,py, size=0.7) {
   ];
   for (const [cx,cy] of corners) {
     const tx=Math.floor(cx/TILE), ty=Math.floor(cy/TILE);
-    if (solid(tx,ty)) return false;
+    if (solid(tx,ty,false,isGhost)) return false;
+  }
+  return true;
+}
+
+function canGoRobot(px,py,size,robotType) {
+  const pad = TILE*(1-size)/2 + 1;
+  const s   = TILE - pad*2 - 1;
+  const corners = [
+    [px+pad,    py+pad],
+    [px+pad+s,  py+pad],
+    [px+pad,    py+pad+s],
+    [px+pad+s,  py+pad+s],
+  ];
+  for (const [cx,cy] of corners) {
+    const tx=Math.floor(cx/TILE), ty=Math.floor(cy/TILE);
+    if (solidForRobot(tx,ty,robotType)) return false;
   }
   return true;
 }
@@ -591,35 +703,60 @@ function canGo(px,py, size=0.7) {
 // Bomberman-style axis movement with grid snapping
 // entity has .x .y (top-left px), moves dx/dy px this frame
 // returns new {x,y}
-const SNAP_DIST = TILE * 0.36; // how far off-center we still auto-align
-function moveEntity(ex, ey, dx, dy, size=0.7) {
+const SNAP_DIST = TILE * 0.36;
+function moveEntity(ex, ey, dx, dy, size=0.7, isGhost=false) {
   let nx = ex + dx;
   let ny = ey + dy;
 
   if (dx !== 0 && dy === 0) {
-    // Moving horizontally — try to snap Y to nearest tile center
     const tileCenter = Math.round(ey / TILE) * TILE;
     const offset = ey - tileCenter;
     if (Math.abs(offset) < SNAP_DIST && offset !== 0) {
       const snapStep = Math.sign(-offset) * Math.min(Math.abs(offset), Math.abs(dx));
-      if (canGo(ex, ey + snapStep, size)) ny = ey + snapStep;
+      if (canGo(ex, ey + snapStep, size, isGhost)) ny = ey + snapStep;
       else ny = ey;
     } else {
       ny = ey;
     }
-    if (!canGo(nx, ny, size)) { nx = ex; }
+    if (!canGo(nx, ny, size, isGhost)) { nx = ex; }
   } else if (dy !== 0 && dx === 0) {
-    // Moving vertically — snap X to nearest tile center
     const tileCenter = Math.round(ex / TILE) * TILE;
     const offset = ex - tileCenter;
     if (Math.abs(offset) < SNAP_DIST && offset !== 0) {
       const snapStep = Math.sign(-offset) * Math.min(Math.abs(offset), Math.abs(dy));
-      if (canGo(ex + snapStep, ey, size)) nx = ex + snapStep;
+      if (canGo(ex + snapStep, ey, size, isGhost)) nx = ex + snapStep;
       else nx = ex;
     } else {
       nx = ex;
     }
-    if (!canGo(nx, ny, size)) { ny = ey; }
+    if (!canGo(nx, ny, size, isGhost)) { ny = ey; }
+  }
+
+  return { x: nx, y: ny };
+}
+
+function moveEntityRobot(ex, ey, dx, dy, size, robotType) {
+  let nx = ex + dx;
+  let ny = ey + dy;
+
+  if (dx !== 0 && dy === 0) {
+    const tileCenter = Math.round(ey / TILE) * TILE;
+    const offset = ey - tileCenter;
+    if (Math.abs(offset) < SNAP_DIST && offset !== 0) {
+      const snapStep = Math.sign(-offset) * Math.min(Math.abs(offset), Math.abs(dx));
+      if (canGoRobot(ex, ey + snapStep, size, robotType)) ny = ey + snapStep;
+      else ny = ey;
+    } else { ny = ey; }
+    if (!canGoRobot(nx, ny, size, robotType)) { nx = ex; }
+  } else if (dy !== 0 && dx === 0) {
+    const tileCenter = Math.round(ex / TILE) * TILE;
+    const offset = ex - tileCenter;
+    if (Math.abs(offset) < SNAP_DIST && offset !== 0) {
+      const snapStep = Math.sign(-offset) * Math.min(Math.abs(offset), Math.abs(dy));
+      if (canGoRobot(ex + snapStep, ey, size, robotType)) nx = ex + snapStep;
+      else nx = ex;
+    } else { nx = ex; }
+    if (!canGoRobot(nx, ny, size, robotType)) { ny = ey; }
   }
 
   return { x: nx, y: ny };
@@ -644,6 +781,9 @@ function update(dt) {
     // frozen
   } else if (state==='playing') {
     levelTime += dt;
+    spikesTimer += dt;
+    teleportCooldown = Math.max(0, teleportCooldown - dt);
+    playerGhost = Math.max(0, playerGhost - dt);
     comboTimer = Math.max(0, comboTimer - dt);
     if (comboTimer <= 0) comboCount = 0;
     updatePlayer(dt);
@@ -655,6 +795,9 @@ function update(dt) {
     updateFloatingTexts(dt);
     updateRobotDebris(dt);
     checkHits();
+    checkTeleport();
+    checkSpikes();
+    checkIce(dt);
     if (robots.every(r=>!r.alive)) {
       // Time bonus
       const timeBonus = Math.max(0, Math.floor((120 - levelTime) * 5));
@@ -700,7 +843,7 @@ function updatePlayer(dt) {
   else if (keys['ArrowDown'] ||keys['s']||keys['S']) { dy= spd; }
 
   if (dx!==0||dy!==0) {
-    const res = moveEntity(p.x, p.y, dx, dy);
+    const res = moveEntity(p.x, p.y, dx, dy, 0.7, playerGhost>0);
     if (res.x!==p.x||res.y!==p.y) {
       p.x=res.x; p.y=res.y;
       if (face!==0) p.facing=face;
@@ -724,21 +867,32 @@ function updatePlayer(dt) {
   }
   else p.frame=0;
 
-  // Plant bomb
-  if ((keys[' ']||keys['Space']) && p.bombCooldown<=0 && bombsActive < MAX_BOMBS) {
-    const tx=Math.floor((p.x+TILE/2)/TILE), ty=Math.floor((p.y+TILE/2)/TILE);
-    if (!solid(tx,ty,true)) {
-      bombs.push({tx,ty,timer:BOMB_FUSE,sparkT:0,grace:0.9});
-      bombsActive++;
+  // Plant bomb / detonate
+  if ((keys[' ']||keys['Space']) && p.bombCooldown<=0) {
+    // If detonator bomb is placed, detonate it
+    if (detonatorBomb && bombs.includes(detonatorBomb)) {
+      detonatorBomb.timer = 0; // force immediate explosion
+      detonatorBomb = null;
       p.bombCooldown=0.25;
-      sfxBombPlace();
-      hud();
+    } else if (bombsActive < MAX_BOMBS) {
+      const tx=Math.floor((p.x+TILE/2)/TILE), ty=Math.floor((p.y+TILE/2)/TILE);
+      if (!solid(tx,ty,true,playerGhost>0)) {
+        const b = {tx,ty,timer:BOMB_FUSE,sparkT:0,grace:0.9,isMega:playerMega,isDetonator:playerDetonator};
+        if (playerDetonator) { b.timer = 9999; detonatorBomb = b; playerDetonator = false; }
+        if (playerMega) { playerMega = false; }
+        bombs.push(b);
+        bombsActive++;
+        p.bombCooldown=0.25;
+        sfxBombPlace();
+        hud();
+      }
     }
   }
 
 }
 
 function updateRobots(dt) {
+  const toAdd = []; // for splitter spawns
   robots.forEach(r=>{
     if (!r.alive) return;
     r.hitFlash = Math.max(0, (r.hitFlash||0)-dt);
@@ -746,18 +900,23 @@ function updateRobots(dt) {
 
     // Speed by type, scales +5% per level
     const levelScale = 1 + (level - 1) * 0.05;
-    const spd = ({
+    const baseSpeed = ({
       [RT_BASIC]:   ROBOT_SPEED,
       [RT_CHASER]:  ROBOT_SPEED * 1.15,
       [RT_SPEEDER]: ROBOT_SPEED * 2.2,
       [RT_TANK]:    ROBOT_SPEED * 0.65,
-    }[r.type] || ROBOT_SPEED) * levelScale * dt;
+      [RT_GHOST]:   ROBOT_SPEED * 1.0,
+      [RT_BOMBER]:  ROBOT_SPEED * 0.9,
+      [RT_SPLITTER]:ROBOT_SPEED * (r.isMini ? 1.8 : 1.1),
+      [RT_BOSS]:    ROBOT_SPEED * 0.5,
+    }[r.type] || ROBOT_SPEED);
+    const spd = baseSpeed * levelScale * dt;
 
-    // Chaser: aim toward player tile
-    if (r.type === RT_CHASER) {
+    // AI direction
+    if (r.type === RT_CHASER || r.type === RT_BOSS) {
       r.changeT -= dt;
       if (r.changeT <= 0) {
-        r.changeT = 0.45 + Math.random()*0.3;
+        r.changeT = r.type===RT_BOSS ? 0.8+Math.random()*0.5 : 0.45 + Math.random()*0.3;
         const px = Math.round(player.x/TILE), py = Math.round(player.y/TILE);
         const rx = Math.round(r.x/TILE),      ry = Math.round(r.y/TILE);
         const diffX = px-rx, diffY = py-ry;
@@ -766,15 +925,15 @@ function updateRobots(dt) {
         else if (diffX < 0) dirs.push({dx:-1,dy:0});
         if (diffY > 0) dirs.push({dx:0,dy:1});
         else if (diffY < 0) dirs.push({dx:0,dy:-1});
-        // fallback: random
         if (!dirs.length) dirs.push(...[{dx:1,dy:0},{dx:-1,dy:0},{dx:0,dy:1},{dx:0,dy:-1}]);
-        const valid = dirs.filter(d=>!solid(rx+d.dx, ry+d.dy));
+        const valid = dirs.filter(d=>!solidForRobot(rx+d.dx, ry+d.dy, r.type));
         r.dir = valid.length ? valid[Math.floor(Math.random()*valid.length)]
                              : [{dx:1,dy:0},{dx:-1,dy:0},{dx:0,dy:1},{dx:0,dy:-1}][Math.floor(Math.random()*4)];
       }
     } else {
-      // Basic / Speeder / Tank: random with frequent changes for speeder
-      const interval = r.type===RT_SPEEDER ? 0.25+Math.random()*0.4 : 0.8+Math.random()*1.5;
+      const interval = r.type===RT_SPEEDER ? 0.25+Math.random()*0.4
+                     : r.type===RT_SPLITTER && r.isMini ? 0.2+Math.random()*0.3
+                     : 0.8+Math.random()*1.5;
       r.changeT -= dt;
       if (r.changeT <= 0) {
         r.changeT = interval;
@@ -783,26 +942,58 @@ function updateRobots(dt) {
       }
     }
 
+    // Bomber: place bombs periodically
+    if (r.type === RT_BOMBER) {
+      r.bombTimer = (r.bombTimer||0) - dt;
+      if (r.bombTimer <= 0) {
+        r.bombTimer = 2.5 + Math.random()*3;
+        const rtx = Math.round(r.x/TILE), rty = Math.round(r.y/TILE);
+        if (!hasBomb(rtx, rty) && map[rty][rtx] !== WALL) {
+          bombs.push({tx:rtx, ty:rty, timer:BOMB_FUSE, sparkT:0, grace:0.9, isRobot:true});
+          bombsActive++;
+        }
+      }
+    }
+
+    // Boss: special attack — shockwave particles
+    if (r.type === RT_BOSS) {
+      r.attackTimer = (r.attackTimer||0) - dt;
+      if (r.attackTimer <= 0) {
+        r.attackTimer = 3 + Math.random()*2;
+        // Boss slam: place bomb at its position
+        const rtx = Math.round(r.x/TILE), rty = Math.round(r.y/TILE);
+        if (!hasBomb(rtx, rty)) {
+          bombs.push({tx:rtx, ty:rty, timer:1.5, sparkT:0, grace:0.9, isMega:true, isRobot:true});
+          bombsActive++;
+          addShake(4);
+          spawnParticles(r.x+TILE/2, r.y+TILE/2, '#ffcc00', 8, 100, 0.4, 4);
+        }
+      }
+    }
+
+    // Movement
     const rdx = r.dir.dx*spd, rdy = r.dir.dy*spd;
-    const res = moveEntity(r.x, r.y, rdx, rdy, 0.62);
+    const res = (r.type===RT_GHOST)
+      ? moveEntityRobot(r.x, r.y, rdx, rdy, 0.62, RT_GHOST)
+      : moveEntity(r.x, r.y, rdx, rdy, r.type===RT_BOSS?0.55:0.62);
 
     if (res.x!==r.x||res.y!==r.y) {
       r.x=res.x; r.y=res.y;
       if (r.dir.dx!==0) r.facing=r.dir.dx>0?1:-1;
     } else {
-      // Blocked — pick new direction immediately
       r.changeT=0;
       const allDirs=[{dx:1,dy:0},{dx:-1,dy:0},{dx:0,dy:1},{dx:0,dy:-1}];
       const shuffled = allDirs.sort(()=>Math.random()-0.5);
       r.dir = shuffled.find(d=>{
         const tx=Math.round(r.x/TILE)+d.dx, ty=Math.round(r.y/TILE)+d.dy;
-        return !solid(tx,ty);
+        return !solidForRobot(tx,ty,r.type);
       }) || shuffled[0];
     }
 
     r.animT=(r.animT||0)+dt;
     r.frame=Math.floor(r.animT*7)%2;
   });
+  if (toAdd.length) robots.push(...toAdd);
 }
 
 function updateBombs(dt) {
@@ -828,9 +1019,10 @@ function spawnParticles(px, py, color, count, speed, life, size=3) {
 
 function explode(bomb) {
   const {tx,ty}=bomb;
+  const range = bomb.isMega ? Math.max(COLS, ROWS) : EXPL_RANGE;
   const cells=[[tx,ty,'center']];
   [[1,0,'h'],[-1,0,'h'],[0,1,'v'],[0,-1,'v']].forEach(([dx,dy,type])=>{
-    for (let i=1;i<=EXPL_RANGE;i++){
+    for (let i=1;i<=range;i++){
       const ex=tx+dx*i, ey=ty+dy*i;
       if (ey<0||ey>=ROWS||ex<0||ex>=COLS) break;
       if (map[ey][ex]===WALL) break;
@@ -839,32 +1031,36 @@ function explode(bomb) {
         map[ey][ex]=FLOOR;
         score+=10; hud();
         spawnFloatingText(ex*TILE+TILE/2, ey*TILE, '+10', '#c89855');
-        // maybe spawn powerup
         if (Math.random()<0.28) spawnPowerup(ex, ey);
-        // crate debris particles
         const cx=ex*TILE+TILE/2, cy=ey*TILE+TILE/2;
         spawnParticles(cx, cy, '#8a5228', 6, 120, 0.6, 4);
         spawnParticles(cx, cy, '#6b3e1e', 4, 80, 0.5, 5);
-        break;
+        if (!bomb.isMega) break; // mega blasts through crates
       }
     }
   });
   cells.forEach(([x,y])=>{
     explosions.push({x,y,timer:EXPL_TIME});
-    // fire particles per cell
     const cx=x*TILE+TILE/2, cy=y*TILE+TILE/2;
     spawnParticles(cx, cy, '#ffe14d', 5, 160, 0.45, 4);
     spawnParticles(cx, cy, '#ff6600', 4, 100, 0.35, 5);
     spawnParticles(cx, cy, '#ff2200', 3, 70,  0.3,  6);
   });
-  bombsActive = Math.max(0, bombsActive-1);
-  addShake(6);
-  sfxExplosion(EXPL_RANGE);
+  if (bomb === detonatorBomb) detonatorBomb = null;
+  if (!bomb.isRobot) bombsActive = Math.max(0, bombsActive-1);
+  else bombsActive = Math.max(0, bombsActive-1);
+  addShake(bomb.isMega ? 10 : 6);
+  sfxExplosion(range);
   hud();
 }
 
 function spawnPowerup(tx, ty) {
   const types = [PU_RANGE, PU_SPEED, PU_LIFE, PU_BOMBS];
+  // New powerups appear from higher levels
+  if (level >= 3) types.push(PU_SHIELD);
+  if (level >= 4) types.push(PU_GHOST);
+  if (level >= 5) types.push(PU_DETONATOR);
+  if (level >= 6) types.push(PU_MEGA);
   const type = types[Math.floor(Math.random()*types.length)];
   powerups.push({ tx, ty, type, animT:0 });
 }
@@ -890,6 +1086,10 @@ function applyPowerup(type) {
   if (type===PU_SPEED)  { PLAYER_SPEED = Math.min(PLAYER_SPEED+0.6*TILE, 6.5*TILE); score+=50; }
   if (type===PU_LIFE)   { lives = Math.min(lives+1, 5); score+=50; hud(); }
   if (type===PU_BOMBS)  { MAX_BOMBS = Math.min(MAX_BOMBS+1, 4); score+=50; }
+  if (type===PU_SHIELD) { playerShield = true; score+=50; spawnFloatingText(player.x+TILE/2, player.y, 'TARCZA!', '#44ddff'); }
+  if (type===PU_GHOST)  { playerGhost = 8; score+=50; spawnFloatingText(player.x+TILE/2, player.y, 'DUCH 8s!', '#bb88ff'); }
+  if (type===PU_DETONATOR) { playerDetonator = true; score+=50; spawnFloatingText(player.x+TILE/2, player.y, 'DETONATOR!', '#ff4444'); }
+  if (type===PU_MEGA)   { playerMega = true; score+=50; spawnFloatingText(player.x+TILE/2, player.y, 'MEGA BOMBA!', '#ff00ff'); }
 }
 
 function updateParticles(dt) {
@@ -962,9 +1162,21 @@ function checkHits() {
       if (r.hp <= 0) {
         r.alive=false;
         const rx=r.x+TILE/2, ry=r.y+TILE/2;
-        const pts = r.type===RT_TANK ? 300 : r.type===RT_CHASER ? 150 : r.type===RT_SPEEDER ? 200 : 100;
+        const pts = {[RT_TANK]:300,[RT_CHASER]:150,[RT_SPEEDER]:200,[RT_GHOST]:250,
+                     [RT_BOMBER]:250,[RT_SPLITTER]:150,[RT_BOSS]:500}[r.type] || 100;
         addScore(pts, rx, ry - 10);
         sfxRobotDeath();
+        // Splitter: spawn 2 mini versions
+        if (r.type === RT_SPLITTER && !r.isMini) {
+          for (let si=0;si<2;si++) {
+            const mini = mkRobot(Math.round(r.x/TILE), Math.round(r.y/TILE), RT_SPLITTER);
+            mini.isMini = true;
+            mini.x = r.x + (si===0?-8:8);
+            mini.y = r.y;
+            mini.invince = 1.0;
+            robots.push(mini);
+          }
+        }
         // Spawn debris pieces (robot death animation)
         spawnRobotDebris(rx, ry, r.type, r.facing);
         const col = robotColor(r.type);
@@ -987,14 +1199,24 @@ function checkHits() {
 
 function robotColor(type) {
   return { [RT_BASIC]:'#4a5c6e', [RT_CHASER]:'#cc3333',
-           [RT_SPEEDER]:'#33bb55', [RT_TANK]:'#7744bb' }[type] || '#888';
+           [RT_SPEEDER]:'#33bb55', [RT_TANK]:'#7744bb',
+           [RT_GHOST]:'#ccccee', [RT_BOMBER]:'#dd8833',
+           [RT_SPLITTER]:'#ddcc22', [RT_BOSS]:'#ffcc00' }[type] || '#888';
 }
 
 function killPlayer() {
   if (player.invince>0) return;
+  // Shield absorbs one hit
+  if (playerShield) {
+    playerShield = false;
+    player.invince = 1.5;
+    spawnFloatingText(player.x+TILE/2, player.y, 'TARCZA!', '#44ddff');
+    spawnParticles(player.x+TILE/2, player.y+TILE/2, '#44ddff', 15, 180, 0.6, 4);
+    sfxPowerup();
+    return;
+  }
   player.alive=false; lives--;
   sfxPlayerDeath();
-  // death particles
   const px=player.x+TILE/2, py=player.y+TILE/2;
   spawnParticles(px, py, '#ffe14d', 14, 200, 0.9, 5);
   spawnParticles(px, py, '#ff4400', 10, 150, 0.7, 4);
@@ -1006,6 +1228,87 @@ function killPlayer() {
 }
 
 function addShake(amount) { shake=amount; shakeT=0.3; }
+
+// ── MAP ELEMENTS: Teleport, Ice, Spikes ──────────────────────
+function checkTeleport() {
+  if (teleportCooldown > 0) return;
+  const p = player;
+  if (!p.alive) return;
+  const ptx = Math.round(p.x/TILE), pty = Math.round(p.y/TILE);
+  const tile = map[pty]&&map[pty][ptx];
+  if (tile === TELEPORT_A || tile === TELEPORT_B) {
+    const target = tile === TELEPORT_A ? TELEPORT_B : TELEPORT_A;
+    // Find the other teleport
+    for (let y=0;y<ROWS;y++) for (let x=0;x<COLS;x++) {
+      if (map[y][x] === target) {
+        p.x = x * TILE; p.y = y * TILE;
+        teleportCooldown = 1.0;
+        spawnParticles(ptx*TILE+TILE/2, pty*TILE+TILE/2, '#bb44ff', 12, 150, 0.5, 4);
+        spawnParticles(x*TILE+TILE/2, y*TILE+TILE/2, '#bb44ff', 12, 150, 0.5, 4);
+        sfxPowerup();
+        return;
+      }
+    }
+  }
+}
+
+function checkSpikes() {
+  // Spikes cycle: 2s visible, 2s hidden
+  const spikesOn = Math.floor(spikesTimer / 2) % 2 === 0;
+  if (!spikesOn) return;
+  const p = player;
+  if (!p.alive || p.invince > 0) return;
+  const ptx = Math.round(p.x/TILE), pty = Math.round(p.y/TILE);
+  if (map[pty]&&map[pty][ptx] === SPIKES) {
+    killPlayer();
+  }
+  // Also damage robots on spikes
+  robots.forEach(r => {
+    if (!r.alive || (r.invince||0) > 0) return;
+    const rtx = Math.round(r.x/TILE), rty = Math.round(r.y/TILE);
+    if (map[rty]&&map[rty][rtx] === SPIKES) {
+      r.hp--;
+      r.invince = 1.5;
+      r.hitFlash = 0.3;
+      if (r.hp <= 0) {
+        r.alive = false;
+        const rx=r.x+TILE/2, ry=r.y+TILE/2;
+        addScore(50, rx, ry-10, 'KOLCE');
+        sfxRobotDeath();
+        spawnRobotDebris(rx, ry, r.type, r.facing);
+        spawnParticles(rx, ry, robotColor(r.type), 8, 150, 0.6, 4);
+        addShake(3);
+        hud();
+      }
+    }
+  });
+}
+
+// Ice sliding — player and robots slide on ice tiles
+let playerSlide = null; // {dx, dy} direction of slide
+function checkIce(dt) {
+  const p = player;
+  if (!p.alive) return;
+  const ptx = Math.round(p.x/TILE), pty = Math.round(p.y/TILE);
+  if (map[pty]&&map[pty][ptx] === ICE && playerSlide) {
+    const slideSpeed = PLAYER_SPEED * 1.2 * dt;
+    const res = moveEntity(p.x, p.y, playerSlide.dx*slideSpeed, playerSlide.dy*slideSpeed, 0.7, playerGhost>0);
+    if (res.x !== p.x || res.y !== p.y) {
+      p.x = res.x; p.y = res.y;
+    } else {
+      playerSlide = null; // hit wall, stop sliding
+    }
+  } else if (map[pty]&&map[pty][ptx] !== ICE) {
+    playerSlide = null;
+  }
+  // Set slide direction when entering ice
+  if (map[pty]&&map[pty][ptx] === ICE && !playerSlide) {
+    if (keys['ArrowLeft']||keys['a']||keys['A']) playerSlide = {dx:-1,dy:0};
+    else if (keys['ArrowRight']||keys['d']||keys['D']) playerSlide = {dx:1,dy:0};
+    else if (keys['ArrowUp']||keys['w']||keys['W']) playerSlide = {dx:0,dy:-1};
+    else if (keys['ArrowDown']||keys['s']||keys['S']) playerSlide = {dx:0,dy:1};
+  }
+}
 
 // ── ROBOT DEBRIS (death animation) ────────────────────────────
 function spawnRobotDebris(cx, cy, type, facing) {
@@ -1101,14 +1404,15 @@ function circle(cx,cy,r) {
 // ════════════════════════════════════════════════════════════════
 function drawDangerIndicators(t) {
   bombs.forEach(b => {
-    if (b.timer > 1.0) return; // only show when <1s left
+    if (b.isDetonator && b.timer > 100) return; // detonator bombs don't tick down
+    if (b.timer > 1.0) return;
     const flash = Math.sin(t * 20) * 0.5 + 0.5;
     const alpha = (1 - b.timer) * 0.3 * flash;
     const {tx, ty} = b;
-    // Calculate blast cells
+    const range = b.isMega ? Math.max(COLS, ROWS) : EXPL_RANGE;
     const cells = [[tx, ty]];
     [[1,0],[-1,0],[0,1],[0,-1]].forEach(([dx,dy]) => {
-      for (let i = 1; i <= EXPL_RANGE; i++) {
+      for (let i = 1; i <= range; i++) {
         const ex = tx + dx*i, ey = ty + dy*i;
         if (ey<0||ey>=ROWS||ex<0||ex>=COLS) break;
         if (map[ey][ex] === WALL) break;
@@ -1172,6 +1476,8 @@ function drawDynamicShadow(ex, ey, radius) {
 //  DRAW WORLD
 // ════════════════════════════════════════════════════════════════
 function drawMap() {
+  const t_now = performance.now()/1000;
+  const spikesOn = Math.floor(spikesTimer / 2) % 2 === 0;
   for (let y=0;y<ROWS;y++) for (let x=0;x<COLS;x++) {
     const px=x*TILE, py=y*TILE, t=map[y][x];
     if (t===FLOOR) {
@@ -1181,8 +1487,117 @@ function drawMap() {
       drawWall(px,py);
     } else if (t===CRATE) {
       drawCrate(px,py);
+    } else if (t===TELEPORT_A || t===TELEPORT_B) {
+      drawTeleport(px, py, t_now, t===TELEPORT_A);
+    } else if (t===ICE) {
+      drawIce(px, py);
+    } else if (t===SPIKES) {
+      drawSpikes(px, py, spikesOn, t_now);
     }
   }
+}
+
+function drawTeleport(px, py, t, isA) {
+  // Floor base
+  ctx.fillStyle = '#141828';
+  ctx.fillRect(px, py, TILE, TILE);
+  // Portal swirl
+  const cx = px+TILE/2, cy = py+TILE/2;
+  const hue = isA ? '#9944ff' : '#ff44aa';
+  const hue2 = isA ? '#6622cc' : '#cc2288';
+  ctx.save();
+  ctx.globalAlpha = 0.4 + Math.sin(t*4)*0.15;
+  const g = ctx.createRadialGradient(cx, cy, 2, cx, cy, TILE*0.42);
+  g.addColorStop(0, hue);
+  g.addColorStop(1, 'transparent');
+  ctx.fillStyle = g;
+  ctx.beginPath(); ctx.arc(cx, cy, TILE*0.42, 0, Math.PI*2); ctx.fill();
+  // Spinning ring
+  ctx.strokeStyle = hue2;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(cx, cy, TILE*0.3, t*3, t*3+Math.PI*1.4);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(cx, cy, TILE*0.2, -t*4, -t*4+Math.PI*1.2);
+  ctx.stroke();
+  // Center dot
+  ctx.fillStyle = '#fff';
+  ctx.globalAlpha = 0.6 + Math.sin(t*6)*0.3;
+  ctx.beginPath(); ctx.arc(cx, cy, 3, 0, Math.PI*2); ctx.fill();
+  // Label
+  ctx.fillStyle = hue;
+  ctx.globalAlpha = 0.7;
+  ctx.font = `bold ${TILE*0.22}px Courier New`;
+  ctx.textAlign = 'center';
+  ctx.fillText(isA ? 'A' : 'B', cx, cy + TILE*0.4);
+  ctx.restore();
+}
+
+function drawIce(px, py) {
+  // Light blue reflective surface
+  ctx.fillStyle = '#1a2a44';
+  ctx.fillRect(px, py, TILE, TILE);
+  ctx.fillStyle = '#2a4466';
+  ctx.fillRect(px+1, py+1, TILE-2, TILE-2);
+  // Shine streaks
+  ctx.save();
+  ctx.globalAlpha = 0.3;
+  ctx.fillStyle = '#88bbff';
+  ctx.fillRect(px+6, py+4, TILE*0.5, 2);
+  ctx.fillRect(px+TILE*0.3, py+TILE*0.6, TILE*0.4, 2);
+  ctx.globalAlpha = 0.15;
+  ctx.fillStyle = '#aaddff';
+  ctx.fillRect(px+2, py+2, TILE-4, TILE-4);
+  // Diamond sparkle
+  ctx.globalAlpha = 0.5;
+  ctx.fillStyle = '#fff';
+  ctx.beginPath();
+  const cx=px+TILE*0.7, cy=py+TILE*0.3;
+  ctx.moveTo(cx, cy-3); ctx.lineTo(cx+2, cy); ctx.lineTo(cx, cy+3); ctx.lineTo(cx-2, cy);
+  ctx.closePath(); ctx.fill();
+  ctx.restore();
+}
+
+function drawSpikes(px, py, active, t) {
+  // Floor base
+  ctx.fillStyle = (Math.floor(px/TILE)+Math.floor(py/TILE))%2===0?C.floorA:C.floorB;
+  ctx.fillRect(px, py, TILE, TILE);
+  if (!active) {
+    // Retracted — show holes
+    ctx.save();
+    ctx.globalAlpha = 0.3;
+    ctx.fillStyle = '#2a1a1a';
+    const spots = [[0.25,0.25],[0.75,0.25],[0.5,0.5],[0.25,0.75],[0.75,0.75]];
+    spots.forEach(([sx,sy]) => {
+      ctx.beginPath(); ctx.arc(px+TILE*sx, py+TILE*sy, 3, 0, Math.PI*2); ctx.fill();
+    });
+    ctx.restore();
+    return;
+  }
+  // Active spikes
+  ctx.save();
+  const flash = Math.sin(t * 10) * 0.1;
+  ctx.globalAlpha = 0.8 + flash;
+  ctx.fillStyle = '#aa3333';
+  const spots = [[0.25,0.25],[0.75,0.25],[0.5,0.5],[0.25,0.75],[0.75,0.75]];
+  spots.forEach(([sx,sy]) => {
+    const cx=px+TILE*sx, cy=py+TILE*sy;
+    ctx.beginPath();
+    ctx.moveTo(cx, cy-6); ctx.lineTo(cx+3, cy+3); ctx.lineTo(cx-3, cy+3);
+    ctx.closePath(); ctx.fill();
+  });
+  // Metallic tips
+  ctx.fillStyle = '#ddaaaa';
+  ctx.globalAlpha = 0.6;
+  spots.forEach(([sx,sy]) => {
+    ctx.beginPath(); ctx.arc(px+TILE*sx, py+TILE*sy-5, 1.5, 0, Math.PI*2); ctx.fill();
+  });
+  // Danger border
+  ctx.strokeStyle = `rgba(255,60,30,${0.3+flash})`;
+  ctx.lineWidth = 1;
+  ctx.strokeRect(px+2, py+2, TILE-4, TILE-4);
+  ctx.restore();
 }
 
 function drawWall(px,py) {
@@ -1226,9 +1641,9 @@ function drawCrate(px,py) {
 function drawBombs(t) {
   bombs.forEach(b=>{
     const px=b.tx*TILE+TILE/2, py=b.ty*TILE+TILE/2;
-    const urgency = 1-b.timer/BOMB_FUSE;
+    const urgency = b.isDetonator ? 0.3 : 1-b.timer/BOMB_FUSE;
     const pulse = 1 + Math.sin(t*(6+urgency*18))*0.1;
-    const r = TILE*0.34*pulse;
+    const r = TILE*(b.isMega?0.4:0.34)*pulse;
 
     // shadow
     ctx.save(); ctx.globalAlpha=0.3;
@@ -1239,10 +1654,30 @@ function drawBombs(t) {
     ctx.restore();
 
     // body
-    ctx.fillStyle=C.bomb;
+    ctx.fillStyle = b.isMega ? '#2a0030' : C.bomb;
     circle(px,py,r); ctx.fill();
-    ctx.fillStyle=C.bombHi;
+    ctx.fillStyle = b.isMega ? '#5a2070' : C.bombHi;
     circle(px-r*0.3,py-r*0.3,r*0.22); ctx.fill();
+
+    // Detonator indicator — blinking red dot
+    if (b.isDetonator) {
+      ctx.save();
+      ctx.fillStyle = Math.floor(t*4)%2===0 ? '#ff2222' : '#aa0000';
+      ctx.globalAlpha = 0.9;
+      circle(px, py-r*0.5, 4); ctx.fill();
+      ctx.restore();
+    }
+    // Mega bomb glow
+    if (b.isMega) {
+      ctx.save();
+      ctx.globalAlpha = 0.2 + Math.sin(t*6)*0.1;
+      const mg = ctx.createRadialGradient(px,py,r*0.5,px,py,r*2);
+      mg.addColorStop(0,'#ff00ff');
+      mg.addColorStop(1,'transparent');
+      ctx.fillStyle = mg;
+      ctx.beginPath(); ctx.arc(px,py,r*2,0,Math.PI*2); ctx.fill();
+      ctx.restore();
+    }
 
     // fuse rope
     ctx.strokeStyle=C.bombFuse; ctx.lineWidth=2.5; ctx.lineCap='round';
@@ -1509,14 +1944,20 @@ function drawCapybara(cx,cy,facing,frame,alpha=1,t=0) {
 const PU_COLORS = {
   [PU_RANGE]: '#ff6644', [PU_SPEED]: '#44ddff',
   [PU_LIFE]:  '#ff4488', [PU_BOMBS]: '#ffe14d',
+  [PU_SHIELD]:'#44ddff', [PU_GHOST]: '#bb88ff',
+  [PU_DETONATOR]:'#ff4444', [PU_MEGA]: '#ff00ff',
 };
 const PU_ICONS = {
   [PU_RANGE]: '💥', [PU_SPEED]: '⚡',
   [PU_LIFE]:  '❤️', [PU_BOMBS]: '💣',
+  [PU_SHIELD]:'🛡', [PU_GHOST]: '👻',
+  [PU_DETONATOR]:'🔴', [PU_MEGA]: '💀',
 };
 const PU_LABELS = {
   [PU_RANGE]: 'ZASIĘG', [PU_SPEED]: 'SZYBKOŚĆ',
   [PU_LIFE]:  'ŻYCIE',  [PU_BOMBS]: 'BOMBA',
+  [PU_SHIELD]:'TARCZA', [PU_GHOST]: 'DUCH',
+  [PU_DETONATOR]:'DETONATOR', [PU_MEGA]: 'MEGA',
 };
 
 function drawPowerups(t) {
@@ -1593,10 +2034,17 @@ function drawRobot(cx,cy,facing,frame,t,type,hitFlash,hp) {
     [RT_CHASER]:  {body:'#6e2a2a',hi:'#8a3a3a',sh:'#4a1818',head:'#5a2020',eye:'#ff5500'},
     [RT_SPEEDER]: {body:'#1e5a38',hi:'#2a7a4a',sh:'#103a22',head:'#184830',eye:'#00ff88'},
     [RT_TANK]:    {body:'#4a3060',hi:'#6a4888',sh:'#2e1a40',head:'#3a2050',eye:'#cc44ff'},
+    [RT_GHOST]:   {body:'#8888aa',hi:'#aaaacc',sh:'#555577',head:'#9999bb',eye:'#ffffff'},
+    [RT_BOMBER]:  {body:'#8a5520',hi:'#bb7733',sh:'#5a3510',head:'#774418',eye:'#ff8800'},
+    [RT_SPLITTER]:{body:'#8a8a20',hi:'#bbbb33',sh:'#5a5a10',head:'#777718',eye:'#ffff00'},
+    [RT_BOSS]:    {body:'#8a7020',hi:'#ccaa33',sh:'#5a4810',head:'#776018',eye:'#ffcc00'},
   };
   const tc = typeColors[type]||typeColors[RT_BASIC];
-  const scale = type===RT_TANK?1.18:type===RT_SPEEDER?0.88:1;
+  const isMini = hp !== undefined && type === RT_SPLITTER && (hitFlash === 0 || hitFlash > 0) && arguments[9];
+  const scale = type===RT_BOSS?1.5:type===RT_TANK?1.18:type===RT_SPEEDER?0.88:1;
   ctx.scale(scale,scale);
+  // Ghost robot: semi-transparent
+  if (type===RT_GHOST) ctx.globalAlpha *= (0.5 + Math.sin(t*3)*0.15);
 
   const S=TILE*0.78, bob=frame===1?2:0;
   const eyeOn=Math.floor(t*3)%2===0;
@@ -1653,7 +2101,14 @@ function drawRobot(cx,cy,facing,frame,t,type,hitFlash,hp) {
   circle(-S*0.13,-S*0.32,S*0.025); ctx.fill(); circle(S*0.09,-S*0.32,S*0.025); ctx.fill();
   ctx.globalAlpha=1;
 
-  const badge={[RT_CHASER]:'⚡',[RT_SPEEDER]:'▶',[RT_TANK]:'🛡'}[type];
+  // HP bar for boss and tank
+  if (type===RT_BOSS) {
+    const maxHp = 5;
+    ctx.fillStyle='#ff4444'; ctx.fillRect(-S*0.4,-S*0.82,S*0.8,5);
+    ctx.fillStyle='#44ff88'; ctx.fillRect(-S*0.4,-S*0.82,S*0.8*(hp/maxHp),5);
+  }
+
+  const badge={[RT_CHASER]:'⚡',[RT_SPEEDER]:'▶',[RT_TANK]:'🛡',[RT_GHOST]:'👻',[RT_BOMBER]:'💣',[RT_SPLITTER]:'✂',[RT_BOSS]:'👑'}[type];
   if(badge){ctx.font=`${S*0.28}px serif`;ctx.textAlign='center';ctx.fillText(badge,0,-S*0.52+bob);}
 
   ctx.strokeStyle=tc.hi; ctx.lineWidth=2.5; ctx.lineCap='round';
@@ -1695,7 +2150,18 @@ function draw(t) {
 
   // Robots
   robots.forEach(r=>{
-    if (r.alive) drawRobot(r.x+TILE/2, r.y+TILE/2, r.facing, r.frame, t, r.type, r.hitFlash, r.hp);
+    if (!r.alive) return;
+    if (r.isMini) {
+      ctx.save();
+      const cx = r.x+TILE/2, cy = r.y+TILE/2;
+      ctx.translate(cx, cy);
+      ctx.scale(0.6, 0.6);
+      ctx.translate(-cx, -cy);
+      drawRobot(cx, cy, r.facing, r.frame, t, r.type, r.hitFlash, r.hp);
+      ctx.restore();
+    } else {
+      drawRobot(r.x+TILE/2, r.y+TILE/2, r.facing, r.frame, t, r.type, r.hitFlash, r.hp);
+    }
   });
 
   // Robot debris (death animation)
@@ -1709,8 +2175,38 @@ function draw(t) {
   if (p.alive) {
     const blink = p.invince>0 && Math.floor(t*9)%2===0;
     if (!blink) {
-      const idleFrame = p.frame === 0 ? 0 : p.frame; // use 0 for idle breathing handled inside drawCapybara
+      ctx.save();
+      // Ghost mode: semi-transparent
+      if (playerGhost > 0) ctx.globalAlpha = 0.5 + Math.sin(t*5)*0.15;
+      const idleFrame = p.frame === 0 ? 0 : p.frame;
       drawCapybara(p.x+TILE/2, p.y+TILE/2, p.facing, idleFrame, 1, t);
+      ctx.restore();
+      // Shield bubble
+      if (playerShield) {
+        ctx.save();
+        ctx.globalAlpha = 0.25 + Math.sin(t*4)*0.1;
+        ctx.strokeStyle = '#44ddff';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(p.x+TILE/2, p.y+TILE/2, TILE*0.5, 0, Math.PI*2);
+        ctx.stroke();
+        const sg = ctx.createRadialGradient(p.x+TILE/2,p.y+TILE/2,TILE*0.1,p.x+TILE/2,p.y+TILE/2,TILE*0.5);
+        sg.addColorStop(0,'rgba(68,221,255,0.05)');
+        sg.addColorStop(1,'rgba(68,221,255,0.15)');
+        ctx.fillStyle = sg;
+        ctx.fill();
+        ctx.restore();
+      }
+      // Ghost timer indicator
+      if (playerGhost > 0) {
+        ctx.save();
+        ctx.fillStyle = '#bb88ff';
+        ctx.font = `bold ${TILE*0.22}px Courier New`;
+        ctx.textAlign = 'center';
+        ctx.globalAlpha = 0.8;
+        ctx.fillText(`👻 ${playerGhost.toFixed(1)}s`, p.x+TILE/2, p.y - 4);
+        ctx.restore();
+      }
     }
   }
 
@@ -1885,7 +2381,7 @@ window.addEventListener('keyup', e=>{ keys[e.key]=false; });
 state = 'menu';
 map = mkMap(); player = mkPlayer(); robots=[]; bombs=[]; explosions=[]; powerups=[]; particles=[]; floatingTexts=[]; robotDebris=[];
 score=0; lives=3; level=1; levelTime=0; comboCount=0; comboTimer=0;
-shake=0; shakeT=0; bombsActive=0;
+shake=0; shakeT=0; bombsActive=0; playerSlide=null;
 hud();
 requestAnimationFrame(loop);
 </script>
