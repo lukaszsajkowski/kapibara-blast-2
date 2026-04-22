@@ -55,9 +55,10 @@ canvas {
   <div>WYNIK: <span class="val" id="scoreEl">0</span></div>
   <div>ROBOTY: <span class="val" id="robotsEl">4</span></div>
   <div>BOMBA: <span class="val" id="bombEl">GOTOWA</span></div>
+  <div id="muteEl" style="color:#556">🔊</div>
 </div>
 <canvas id="c"></canvas>
-<div id="controls">WASD / STRZALKI — ruch &nbsp;&nbsp; SPACJA — bomba &nbsp;&nbsp; ESC — pauza &nbsp;&nbsp; R — restart</div>
+<div id="controls">WASD / STRZALKI — ruch &nbsp;&nbsp; SPACJA — bomba &nbsp;&nbsp; ESC — pauza &nbsp;&nbsp; M — mute &nbsp;&nbsp; R — restart</div>
 
 <script>
 // ════════════════════════════════════════════════════════════════
@@ -102,6 +103,7 @@ const $lives  = document.getElementById('livesEl');
 const $score  = document.getElementById('scoreEl');
 const $robots = document.getElementById('robotsEl');
 const $bomb   = document.getElementById('bombEl');
+const $mute   = document.getElementById('muteEl');
 
 // ════════════════════════════════════════════════════════════════
 //  COLOR PALETTE
@@ -128,9 +130,312 @@ const C = {
 };
 
 // ════════════════════════════════════════════════════════════════
+//  AUDIO SYSTEM (Web Audio API — procedural, no files)
+// ════════════════════════════════════════════════════════════════
+let audioCtx = null;
+let muted = false;
+let musicMuted = false;
+let masterGain = null;
+let sfxGain = null;
+let musicGain = null;
+
+function initAudio() {
+  if (audioCtx) return;
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  masterGain = audioCtx.createGain();
+  masterGain.gain.value = 1.0;
+  masterGain.connect(audioCtx.destination);
+  sfxGain = audioCtx.createGain();
+  sfxGain.gain.value = 0.5;
+  sfxGain.connect(masterGain);
+  musicGain = audioCtx.createGain();
+  musicGain.gain.value = 0.25;
+  musicGain.connect(masterGain);
+}
+
+function ensureAudio() {
+  if (!audioCtx) initAudio();
+  if (audioCtx.state === 'suspended') audioCtx.resume();
+}
+
+// --- SFX: Bomb placement (thunk) ---
+function sfxBombPlace() {
+  if (muted || !audioCtx) return;
+  const t = audioCtx.currentTime;
+  const osc = audioCtx.createOscillator();
+  const g = audioCtx.createGain();
+  osc.type = 'sine';
+  osc.frequency.setValueAtTime(150, t);
+  osc.frequency.exponentialRampToValueAtTime(60, t + 0.12);
+  g.gain.setValueAtTime(0.4, t);
+  g.gain.exponentialRampToValueAtTime(0.001, t + 0.15);
+  osc.connect(g); g.connect(sfxGain);
+  osc.start(t); osc.stop(t + 0.15);
+}
+
+// --- SFX: Explosion (boom) ---
+function sfxExplosion(range) {
+  if (muted || !audioCtx) return;
+  const t = audioCtx.currentTime;
+  const dur = 0.3 + (range || 2) * 0.05;
+  // Noise burst
+  const bufSize = audioCtx.sampleRate * dur;
+  const buf = audioCtx.createBuffer(1, bufSize, audioCtx.sampleRate);
+  const data = buf.getChannelData(0);
+  for (let i = 0; i < bufSize; i++) data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / bufSize, 2);
+  const noise = audioCtx.createBufferSource();
+  noise.buffer = buf;
+  const nGain = audioCtx.createGain();
+  nGain.gain.setValueAtTime(0.5, t);
+  nGain.gain.exponentialRampToValueAtTime(0.001, t + dur);
+  const filt = audioCtx.createBiquadFilter();
+  filt.type = 'lowpass';
+  filt.frequency.setValueAtTime(800, t);
+  filt.frequency.exponentialRampToValueAtTime(100, t + dur);
+  noise.connect(filt); filt.connect(nGain); nGain.connect(sfxGain);
+  noise.start(t); noise.stop(t + dur);
+  // Sub bass thump
+  const osc = audioCtx.createOscillator();
+  const g = audioCtx.createGain();
+  osc.type = 'sine';
+  osc.frequency.setValueAtTime(80, t);
+  osc.frequency.exponentialRampToValueAtTime(20, t + 0.25);
+  g.gain.setValueAtTime(0.6, t);
+  g.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
+  osc.connect(g); g.connect(sfxGain);
+  osc.start(t); osc.stop(t + 0.3);
+}
+
+// --- SFX: Robot death (metallic crunch) ---
+function sfxRobotDeath() {
+  if (muted || !audioCtx) return;
+  const t = audioCtx.currentTime;
+  // Metallic noise
+  const bufSize = audioCtx.sampleRate * 0.25;
+  const buf = audioCtx.createBuffer(1, bufSize, audioCtx.sampleRate);
+  const data = buf.getChannelData(0);
+  for (let i = 0; i < bufSize; i++) data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / bufSize, 3);
+  const noise = audioCtx.createBufferSource();
+  noise.buffer = buf;
+  const filt = audioCtx.createBiquadFilter();
+  filt.type = 'bandpass';
+  filt.frequency.setValueAtTime(2000, t);
+  filt.Q.value = 5;
+  const g = audioCtx.createGain();
+  g.gain.setValueAtTime(0.35, t);
+  g.gain.exponentialRampToValueAtTime(0.001, t + 0.25);
+  noise.connect(filt); filt.connect(g); g.connect(sfxGain);
+  noise.start(t); noise.stop(t + 0.25);
+  // Descending tone
+  const osc = audioCtx.createOscillator();
+  const og = audioCtx.createGain();
+  osc.type = 'square';
+  osc.frequency.setValueAtTime(400, t);
+  osc.frequency.exponentialRampToValueAtTime(80, t + 0.2);
+  og.gain.setValueAtTime(0.15, t);
+  og.gain.exponentialRampToValueAtTime(0.001, t + 0.2);
+  osc.connect(og); og.connect(sfxGain);
+  osc.start(t); osc.stop(t + 0.2);
+}
+
+// --- SFX: Powerup pickup (positive chime) ---
+function sfxPowerup() {
+  if (muted || !audioCtx) return;
+  const t = audioCtx.currentTime;
+  const notes = [523, 659, 784]; // C5, E5, G5
+  notes.forEach((freq, i) => {
+    const osc = audioCtx.createOscillator();
+    const g = audioCtx.createGain();
+    osc.type = 'sine';
+    osc.frequency.value = freq;
+    g.gain.setValueAtTime(0, t + i * 0.08);
+    g.gain.linearRampToValueAtTime(0.25, t + i * 0.08 + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.001, t + i * 0.08 + 0.2);
+    osc.connect(g); g.connect(sfxGain);
+    osc.start(t + i * 0.08); osc.stop(t + i * 0.08 + 0.2);
+  });
+}
+
+// --- SFX: Player death (dramatic descending) ---
+function sfxPlayerDeath() {
+  if (muted || !audioCtx) return;
+  const t = audioCtx.currentTime;
+  const osc = audioCtx.createOscillator();
+  const g = audioCtx.createGain();
+  osc.type = 'sawtooth';
+  osc.frequency.setValueAtTime(600, t);
+  osc.frequency.exponentialRampToValueAtTime(80, t + 0.6);
+  g.gain.setValueAtTime(0.25, t);
+  g.gain.linearRampToValueAtTime(0.3, t + 0.05);
+  g.gain.exponentialRampToValueAtTime(0.001, t + 0.7);
+  osc.connect(g); g.connect(sfxGain);
+  osc.start(t); osc.stop(t + 0.7);
+  // Noise layer
+  const bufSize = audioCtx.sampleRate * 0.5;
+  const buf = audioCtx.createBuffer(1, bufSize, audioCtx.sampleRate);
+  const data = buf.getChannelData(0);
+  for (let i = 0; i < bufSize; i++) data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / bufSize, 2);
+  const ns = audioCtx.createBufferSource();
+  ns.buffer = buf;
+  const ng = audioCtx.createGain();
+  ng.gain.setValueAtTime(0.2, t);
+  ng.gain.exponentialRampToValueAtTime(0.001, t + 0.5);
+  ns.connect(ng); ng.connect(sfxGain);
+  ns.start(t); ns.stop(t + 0.5);
+}
+
+// --- SFX: Level transition (fanfare) ---
+function sfxLevelComplete() {
+  if (muted || !audioCtx) return;
+  const t = audioCtx.currentTime;
+  const notes = [392, 494, 587, 784]; // G4, B4, D5, G5
+  notes.forEach((freq, i) => {
+    const osc = audioCtx.createOscillator();
+    const g = audioCtx.createGain();
+    osc.type = 'square';
+    osc.frequency.value = freq;
+    g.gain.setValueAtTime(0, t + i * 0.12);
+    g.gain.linearRampToValueAtTime(0.18, t + i * 0.12 + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.001, t + i * 0.12 + 0.35);
+    osc.connect(g); g.connect(sfxGain);
+    osc.start(t + i * 0.12); osc.stop(t + i * 0.12 + 0.35);
+  });
+}
+
+// --- SFX: Footsteps (subtle) ---
+let lastStepTime = 0;
+function sfxStep() {
+  if (muted || !audioCtx) return;
+  const t = audioCtx.currentTime;
+  if (t - lastStepTime < 0.18) return;
+  lastStepTime = t;
+  const osc = audioCtx.createOscillator();
+  const g = audioCtx.createGain();
+  osc.type = 'sine';
+  osc.frequency.setValueAtTime(100 + Math.random() * 40, t);
+  osc.frequency.exponentialRampToValueAtTime(50, t + 0.06);
+  g.gain.setValueAtTime(0.08, t);
+  g.gain.exponentialRampToValueAtTime(0.001, t + 0.06);
+  osc.connect(g); g.connect(sfxGain);
+  osc.start(t); osc.stop(t + 0.06);
+}
+
+// ── MUSIC SYSTEM (procedural 8-bit beat) ──────────────────────
+let musicPlaying = false;
+let musicInterval = null;
+let musicStep = 0;
+
+const MUSIC_BASS =  [0, 0, 7, 7, 5, 5, 3, 3]; // semitones from root
+const MUSIC_MELODY = [12,12,15,12,17,15,12,10, 12,12,15,12,19,17,15,12];
+const MUSIC_ROOT = 110; // A2
+
+function semitoneToFreq(root, semi) {
+  return root * Math.pow(2, semi / 12);
+}
+
+function musicNoteOn(freq, type, vol, dur) {
+  if (!audioCtx) return;
+  const t = audioCtx.currentTime;
+  const osc = audioCtx.createOscillator();
+  const g = audioCtx.createGain();
+  osc.type = type;
+  osc.frequency.value = freq;
+  g.gain.setValueAtTime(vol, t);
+  g.gain.setValueAtTime(vol, t + dur * 0.7);
+  g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+  osc.connect(g); g.connect(musicGain);
+  osc.start(t); osc.stop(t + dur);
+}
+
+function musicTick() {
+  if (!audioCtx || musicMuted) return;
+  const bpm = musicTempo();
+  const beatDur = 60 / bpm;
+
+  // Bass
+  const bassNote = MUSIC_BASS[musicStep % MUSIC_BASS.length];
+  musicNoteOn(semitoneToFreq(MUSIC_ROOT, bassNote), 'square', 0.2, beatDur * 0.8);
+
+  // Melody (every other step)
+  if (musicStep % 2 === 0) {
+    const melNote = MUSIC_MELODY[(musicStep / 2) % MUSIC_MELODY.length];
+    musicNoteOn(semitoneToFreq(MUSIC_ROOT, melNote), 'square', 0.1, beatDur * 0.6);
+  }
+
+  // Hi-hat (noise tick)
+  if (musicStep % 2 === 1) {
+    const bufSize = audioCtx.sampleRate * 0.04;
+    const buf = audioCtx.createBuffer(1, bufSize, audioCtx.sampleRate);
+    const data = buf.getChannelData(0);
+    for (let i = 0; i < bufSize; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / bufSize);
+    const ns = audioCtx.createBufferSource();
+    ns.buffer = buf;
+    const filt = audioCtx.createBiquadFilter();
+    filt.type = 'highpass'; filt.frequency.value = 8000;
+    const g = audioCtx.createGain();
+    g.gain.setValueAtTime(0.12, audioCtx.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.04);
+    ns.connect(filt); filt.connect(g); g.connect(musicGain);
+    ns.start(); ns.stop(audioCtx.currentTime + 0.04);
+  }
+
+  // Kick drum on beat 0 and 4
+  if (musicStep % 4 === 0) {
+    const t = audioCtx.currentTime;
+    const osc = audioCtx.createOscillator();
+    const g = audioCtx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(150, t);
+    osc.frequency.exponentialRampToValueAtTime(40, t + 0.1);
+    g.gain.setValueAtTime(0.3, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.12);
+    osc.connect(g); g.connect(musicGain);
+    osc.start(t); osc.stop(t + 0.12);
+  }
+
+  musicStep++;
+}
+
+function musicTempo() {
+  // Normal 140 BPM, 180 when 1 robot left
+  if (state === 'playing' && robots && robots.filter(r => r.alive).length === 1) return 180;
+  return 140;
+}
+
+function startMusic() {
+  if (musicPlaying) stopMusic();
+  musicPlaying = true;
+  musicStep = 0;
+  scheduleMusic();
+}
+
+function scheduleMusic() {
+  if (!musicPlaying) return;
+  const bpm = musicTempo();
+  const interval = (60 / bpm) * 1000;
+  musicInterval = setTimeout(() => {
+    if (musicPlaying && !musicMuted) musicTick();
+    if (musicPlaying) scheduleMusic();
+  }, interval);
+}
+
+function stopMusic() {
+  musicPlaying = false;
+  if (musicInterval) { clearTimeout(musicInterval); musicInterval = null; }
+}
+
+function toggleMute() {
+  muted = !muted;
+  musicMuted = muted;
+  if (muted) stopMusic();
+  else if (state === 'playing' || state === 'levelintro' || state === 'levelcomplete') startMusic();
+}
+
+// ════════════════════════════════════════════════════════════════
 //  STATE
 // ════════════════════════════════════════════════════════════════
 let map, player, robots, bombs, explosions, powerups, particles, floatingTexts;
+let robotDebris = []; // for death animation
 let score, lives, state, deathTimer, shake, shakeT;
 let level, levelTimer, levelTime;
 let comboCount, comboTimer;
@@ -176,8 +481,9 @@ function reset() {
   bombsActive = 0;
   score=0; lives=3; level=0;
   comboCount=0; comboTimer=0;
-  bombs=[]; explosions=[]; powerups=[]; particles=[]; floatingTexts=[];
+  bombs=[]; explosions=[]; powerups=[]; particles=[]; floatingTexts=[]; robotDebris=[];
   shake=0; shakeT=0;
+  ensureAudio();
   startLevel();
 }
 
@@ -214,7 +520,7 @@ function startLevel() {
   player = mkPlayer();
   player.invince = 2.0; // brief invincibility on level start
   bombsActive = 0;
-  bombs=[]; explosions=[]; powerups=[];
+  bombs=[]; explosions=[]; powerups=[]; robotDebris=[];
 
   const types = robotsForLevel(level);
   const positions = spawnPositions(types.length);
@@ -330,7 +636,10 @@ function update(dt) {
     // idle — wait for input
   } else if (state==='levelintro') {
     levelTimer -= dt;
-    if (levelTimer <= 0) state='playing';
+    if (levelTimer <= 0) {
+      state='playing';
+      if (!musicMuted && !musicPlaying) startMusic();
+    }
   } else if (state==='paused') {
     // frozen
   } else if (state==='playing') {
@@ -344,6 +653,7 @@ function update(dt) {
     updatePowerups(dt);
     updateParticles(dt);
     updateFloatingTexts(dt);
+    updateRobotDebris(dt);
     checkHits();
     if (robots.every(r=>!r.alive)) {
       // Time bonus
@@ -354,19 +664,22 @@ function update(dt) {
       }
       state='levelcomplete';
       levelTimer = 2.5;
+      sfxLevelComplete();
     }
   } else if (state==='levelcomplete') {
     updateParticles(dt);
     updateFloatingTexts(dt);
+    updateRobotDebris(dt);
     levelTimer -= dt;
     if (levelTimer <= 0) startLevel();
   } else if (state==='dead') {
     updateParticles(dt);
     updateFloatingTexts(dt);
+    updateRobotDebris(dt);
     deathTimer -= dt;
     if (deathTimer<=0) {
       if (lives>0) { player=mkPlayer(); state='playing'; }
-      else state='gameover';
+      else { state='gameover'; stopMusic(); }
     }
   }
 }
@@ -395,7 +708,20 @@ function updatePlayer(dt) {
     }
   }
 
-  if (moved) { p.animT+=dt; p.frame=Math.floor(p.animT*9)%2; }
+  if (moved) {
+    p.animT+=dt; p.frame=Math.floor(p.animT*9)%2;
+    sfxStep();
+    // Trail particles when speed boosted
+    if (PLAYER_SPEED > 4.2 * TILE && Math.random() < 0.4) {
+      particles.push({
+        x: p.x + TILE/2 + (Math.random()-0.5)*8,
+        y: p.y + TILE*0.7,
+        vx: (Math.random()-0.5)*20, vy: -Math.random()*30,
+        life: 0.3, maxLife: 0.3,
+        color: '#44ddff', size: 2 + Math.random()*2, gravity: -10
+      });
+    }
+  }
   else p.frame=0;
 
   // Plant bomb
@@ -405,6 +731,7 @@ function updatePlayer(dt) {
       bombs.push({tx,ty,timer:BOMB_FUSE,sparkT:0,grace:0.9});
       bombsActive++;
       p.bombCooldown=0.25;
+      sfxBombPlace();
       hud();
     }
   }
@@ -415,6 +742,7 @@ function updateRobots(dt) {
   robots.forEach(r=>{
     if (!r.alive) return;
     r.hitFlash = Math.max(0, (r.hitFlash||0)-dt);
+    r.invince = Math.max(0, (r.invince||0)-dt);
 
     // Speed by type, scales +5% per level
     const levelScale = 1 + (level - 1) * 0.05;
@@ -531,6 +859,7 @@ function explode(bomb) {
   });
   bombsActive = Math.max(0, bombsActive-1);
   addShake(6);
+  sfxExplosion(EXPL_RANGE);
   hud();
 }
 
@@ -546,6 +875,7 @@ function updatePowerups(dt) {
     const px=Math.round(player.x/TILE), py=Math.round(player.y/TILE);
     if (pu.tx===px && pu.ty===py) {
       applyPowerup(pu.type);
+      sfxPowerup();
       // pickup sparkle
       spawnParticles(pu.tx*TILE+TILE/2, pu.ty*TILE+TILE/2, '#ffe14d', 12, 140, 0.5, 3);
       spawnParticles(pu.tx*TILE+TILE/2, pu.ty*TILE+TILE/2, '#ffffff', 6, 90, 0.4, 2);
@@ -634,6 +964,9 @@ function checkHits() {
         const rx=r.x+TILE/2, ry=r.y+TILE/2;
         const pts = r.type===RT_TANK ? 300 : r.type===RT_CHASER ? 150 : r.type===RT_SPEEDER ? 200 : 100;
         addScore(pts, rx, ry - 10);
+        sfxRobotDeath();
+        // Spawn debris pieces (robot death animation)
+        spawnRobotDebris(rx, ry, r.type, r.facing);
         const col = robotColor(r.type);
         spawnParticles(rx, ry, col,    10, 180, 0.7, 5);
         spawnParticles(rx, ry, '#fff',  5, 220, 0.4, 3);
@@ -660,6 +993,7 @@ function robotColor(type) {
 function killPlayer() {
   if (player.invince>0) return;
   player.alive=false; lives--;
+  sfxPlayerDeath();
   // death particles
   const px=player.x+TILE/2, py=player.y+TILE/2;
   spawnParticles(px, py, '#ffe14d', 14, 200, 0.9, 5);
@@ -672,6 +1006,74 @@ function killPlayer() {
 }
 
 function addShake(amount) { shake=amount; shakeT=0.3; }
+
+// ── ROBOT DEBRIS (death animation) ────────────────────────────
+function spawnRobotDebris(cx, cy, type, facing) {
+  const col = robotColor(type);
+  const parts = [
+    { label:'head', ox:0, oy:-12, w:14, h:12 },
+    { label:'body', ox:0, oy:0,   w:16, h:14 },
+    { label:'armL', ox:-14,oy:-2, w:6,  h:10 },
+    { label:'armR', ox:14, oy:-2, w:6,  h:10 },
+    { label:'legL', ox:-6, oy:12, w:7,  h:8  },
+    { label:'legR', ox:6,  oy:12, w:7,  h:8  },
+    { label:'ant',  ox:6,  oy:-18,w:3,  h:8  },
+  ];
+  parts.forEach(p => {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = 80 + Math.random() * 120;
+    robotDebris.push({
+      x: cx + p.ox, y: cy + p.oy,
+      w: p.w, h: p.h,
+      vx: Math.cos(angle) * speed + (p.ox > 0 ? 30 : p.ox < 0 ? -30 : 0),
+      vy: Math.sin(angle) * speed - 80 - Math.random() * 60,
+      rot: 0, rotV: (Math.random() - 0.5) * 15,
+      life: 1.0, maxLife: 1.0,
+      color: col,
+      label: p.label,
+    });
+  });
+}
+
+function updateRobotDebris(dt) {
+  robotDebris.forEach(d => {
+    d.x += d.vx * dt;
+    d.y += d.vy * dt;
+    d.vy += 300 * dt; // gravity
+    d.rot += d.rotV * dt;
+    d.life -= dt;
+  });
+  robotDebris = robotDebris.filter(d => d.life > 0);
+}
+
+function drawRobotDebris() {
+  robotDebris.forEach(d => {
+    const alpha = Math.max(0, d.life / d.maxLife);
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.translate(d.x, d.y);
+    ctx.rotate(d.rot);
+    // Head piece gets an "eye"
+    if (d.label === 'head') {
+      ctx.fillStyle = d.color;
+      rr(-d.w/2, -d.h/2, d.w, d.h, 3); ctx.fill();
+      ctx.fillStyle = '#ff3a3a';
+      circle(- 3, -1, 2); ctx.fill();
+      circle(3, -1, 2); ctx.fill();
+    } else if (d.label === 'ant') {
+      ctx.strokeStyle = d.color; ctx.lineWidth = 2; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(0, -d.h); ctx.stroke();
+      ctx.fillStyle = '#ff3a3a'; circle(0, -d.h, 2); ctx.fill();
+    } else {
+      ctx.fillStyle = d.color;
+      rr(-d.w/2, -d.h/2, d.w, d.h, 2); ctx.fill();
+      // Panel detail
+      ctx.fillStyle = 'rgba(0,0,0,0.3)';
+      ctx.fillRect(-d.w/4, -d.h/4, d.w/2, d.h/2);
+    }
+    ctx.restore();
+  });
+}
 
 // ════════════════════════════════════════════════════════════════
 //  DRAW HELPERS
@@ -692,6 +1094,78 @@ function rr(x,y,w,h,r=4) {
 
 function circle(cx,cy,r) {
   ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2); ctx.closePath();
+}
+
+// ════════════════════════════════════════════════════════════════
+//  DANGER INDICATOR — tiles flash when bomb <1s to explode
+// ════════════════════════════════════════════════════════════════
+function drawDangerIndicators(t) {
+  bombs.forEach(b => {
+    if (b.timer > 1.0) return; // only show when <1s left
+    const flash = Math.sin(t * 20) * 0.5 + 0.5;
+    const alpha = (1 - b.timer) * 0.3 * flash;
+    const {tx, ty} = b;
+    // Calculate blast cells
+    const cells = [[tx, ty]];
+    [[1,0],[-1,0],[0,1],[0,-1]].forEach(([dx,dy]) => {
+      for (let i = 1; i <= EXPL_RANGE; i++) {
+        const ex = tx + dx*i, ey = ty + dy*i;
+        if (ey<0||ey>=ROWS||ex<0||ex>=COLS) break;
+        if (map[ey][ex] === WALL) break;
+        cells.push([ex, ey]);
+        if (map[ey][ex] === CRATE) break;
+      }
+    });
+    ctx.save();
+    ctx.fillStyle = `rgba(255, 60, 20, ${alpha})`;
+    cells.forEach(([cx, cy]) => {
+      ctx.fillRect(cx * TILE, cy * TILE, TILE, TILE);
+    });
+    // Border pulse on danger cells
+    ctx.strokeStyle = `rgba(255, 100, 30, ${alpha * 1.5})`;
+    ctx.lineWidth = 2;
+    cells.forEach(([cx, cy]) => {
+      ctx.strokeRect(cx * TILE + 1, cy * TILE + 1, TILE - 2, TILE - 2);
+    });
+    ctx.restore();
+  });
+}
+
+// ════════════════════════════════════════════════════════════════
+//  DYNAMIC SHADOWS — under entities, react to explosions
+// ════════════════════════════════════════════════════════════════
+function drawDynamicShadow(ex, ey, radius) {
+  // Base shadow
+  let shadowAlpha = 0.2;
+  let shadowColor = '0,0,0';
+  // Check for nearby explosions — brighten shadow area
+  const nearExpl = explosions.some(e => {
+    const dx = (e.x * TILE + TILE/2) - ex;
+    const dy = (e.y * TILE + TILE/2) - ey;
+    return Math.sqrt(dx*dx + dy*dy) < TILE * 4;
+  });
+  if (nearExpl) {
+    shadowAlpha = 0.08;
+    shadowColor = '255,150,50';
+  }
+  ctx.save();
+  ctx.globalAlpha = shadowAlpha;
+  ctx.fillStyle = `rgb(${shadowColor})`;
+  ctx.beginPath();
+  ctx.ellipse(ex, ey + radius * 1.1, radius * 0.9, radius * 0.25, 0, 0, Math.PI*2);
+  ctx.fill();
+  if (nearExpl) {
+    // Extra glow under character from explosion light
+    ctx.globalAlpha = 0.15;
+    const g = ctx.createRadialGradient(ex, ey + radius * 0.5, 0, ex, ey + radius * 0.5, radius * 1.5);
+    g.addColorStop(0, 'rgba(255,180,80,0.4)');
+    g.addColorStop(1, 'rgba(255,100,20,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(ex, ey + radius * 0.5, radius * 1.5, 0, Math.PI*2);
+    ctx.fill();
+  }
+  ctx.restore();
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -822,7 +1296,13 @@ function drawCapybara(cx,cy,facing,frame,alpha=1,t=0) {
   ctx.save();
   ctx.globalAlpha=alpha;
   ctx.translate(cx,cy);
-  ctx.scale(facing,1);
+
+  // Idle breathing animation when standing still
+  const idle = frame === 0;
+  const breathe = idle ? Math.sin(t * 2.5) * 0.015 : 0;
+  const breatheY = idle ? Math.sin(t * 2.5) * 1.2 : 0;
+  ctx.scale(facing * (1 + breathe), 1 + breathe * 0.5);
+  ctx.translate(0, breatheY);
 
   const bob  = frame===1 ? 2 : 0;
   const S    = TILE*0.86;
@@ -1202,23 +1682,36 @@ function draw(t) {
   ctx.fillRect(0,0,W,H);
 
   drawMap();
+  drawDangerIndicators(t);
   drawPowerups(t);
   drawExplosions();
   drawBombs(t);
+
+  // Dynamic shadows under entities
+  robots.forEach(r => {
+    if (r.alive) drawDynamicShadow(r.x + TILE/2, r.y + TILE/2, TILE * 0.35);
+  });
+  if (player.alive) drawDynamicShadow(player.x + TILE/2, player.y + TILE/2, TILE * 0.38);
 
   // Robots
   robots.forEach(r=>{
     if (r.alive) drawRobot(r.x+TILE/2, r.y+TILE/2, r.facing, r.frame, t, r.type, r.hitFlash, r.hp);
   });
 
+  // Robot debris (death animation)
+  drawRobotDebris();
+
   // Particles
   drawParticles();
 
-  // Player
+  // Player — idle animation (breathing) when not moving
   const p=player;
   if (p.alive) {
     const blink = p.invince>0 && Math.floor(t*9)%2===0;
-    if (!blink) drawCapybara(p.x+TILE/2, p.y+TILE/2, p.facing, p.frame, 1, t);
+    if (!blink) {
+      const idleFrame = p.frame === 0 ? 0 : p.frame; // use 0 for idle breathing handled inside drawCapybara
+      drawCapybara(p.x+TILE/2, p.y+TILE/2, p.facing, idleFrame, 1, t);
+    }
   }
 
   // Floating score texts
@@ -1292,7 +1785,7 @@ function drawMenuScreen(t) {
   // Controls hint
   ctx.fillStyle='#445';
   ctx.font=`13px 'Courier New'`;
-  ctx.fillText('WASD / STRZALKI — ruch    SPACJA — bomba    ESC — pauza', W/2, H/2 + 150);
+  ctx.fillText('WASD / STRZALKI — ruch    SPACJA — bomba    ESC — pauza    M — mute', W/2, H/2 + 150);
 }
 
 function drawLevelIntro() {
@@ -1335,7 +1828,7 @@ function drawPauseScreen() {
 
   ctx.fillStyle='#889';
   ctx.font=`16px 'Courier New'`;
-  ctx.fillText('ESC — KONTYNUUJ    R — RESTART', W/2, H/2 + 30);
+  ctx.fillText('ESC — KONTYNUUJ    R — RESTART    M — MUTE', W/2, H/2 + 30);
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -1357,8 +1850,16 @@ window.addEventListener('keydown', e=>{
   keys[e.key]=true;
   if ([' ','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key)) e.preventDefault();
 
+  // Mute toggle works in any state
+  if (e.key==='m'||e.key==='M') {
+    ensureAudio();
+    toggleMute();
+    $mute.textContent = muted ? '🔇' : '🔊';
+    return;
+  }
+
   if (state==='menu') {
-    if (e.key==='Enter') { reset(); }
+    if (e.key==='Enter') { ensureAudio(); reset(); }
     return;
   }
   if (state==='paused') {
@@ -1382,7 +1883,7 @@ window.addEventListener('keyup', e=>{ keys[e.key]=false; });
 // ════════════════════════════════════════════════════════════════
 // Start at menu
 state = 'menu';
-map = mkMap(); player = mkPlayer(); robots=[]; bombs=[]; explosions=[]; powerups=[]; particles=[]; floatingTexts=[];
+map = mkMap(); player = mkPlayer(); robots=[]; bombs=[]; explosions=[]; powerups=[]; particles=[]; floatingTexts=[]; robotDebris=[];
 score=0; lives=3; level=1; levelTime=0; comboCount=0; comboTimer=0;
 shake=0; shakeT=0; bombsActive=0;
 hud();
