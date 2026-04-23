@@ -641,14 +641,25 @@ function tileOf(px,py){ return [Math.floor(px/TILE), Math.floor(py/TILE)]; }
 
 function hasBomb(tx,ty){ return bombs.some(b=>b.tx===tx&&b.ty===ty); }
 
+function playerOverlapsTile(tx,ty) {
+  const pad = TILE*(1-0.7)/2 + 1;
+  const s   = TILE - pad*2 - 1;
+  const corners = [
+    [player.x+pad,   player.y+pad],
+    [player.x+pad+s, player.y+pad],
+    [player.x+pad,   player.y+pad+s],
+    [player.x+pad+s, player.y+pad+s],
+  ];
+  return corners.some(([cx,cy]) => Math.floor(cx/TILE)===tx && Math.floor(cy/TILE)===ty);
+}
+
 function solid(tx,ty,ignoreBombs=false,isGhost=false) {
   if (tx<0||ty<0||tx>=COLS||ty>=ROWS) return true;
   const t = map[ty][tx];
   if (t===WALL) return true;
   if (t===CRATE && !isGhost) return true;
   if (!ignoreBombs && hasBomb(tx,ty)) {
-    const b = bombs.find(b=>b.tx===tx&&b.ty===ty);
-    if (b && b.grace > 0) return false;
+    if (playerOverlapsTile(tx,ty)) return false;
     return true;
   }
   return false;
@@ -659,11 +670,7 @@ function solidForRobot(tx,ty,robotType) {
   const t = map[ty][tx];
   if (t===WALL) return true;
   if (t===CRATE && robotType!==RT_GHOST) return true;
-  if (hasBomb(tx,ty)) {
-    const b = bombs.find(b=>b.tx===tx&&b.ty===ty);
-    if (b && b.grace > 0) return false;
-    return true;
-  }
+  if (hasBomb(tx,ty)) return true;
   return false;
 }
 
@@ -821,7 +828,7 @@ function update(dt) {
     updateRobotDebris(dt);
     deathTimer -= dt;
     if (deathTimer<=0) {
-      if (lives>0) { player=mkPlayer(); state='playing'; }
+      if (lives>0) { player=mkPlayer(); player.invince=2.5; state='playing'; }
       else { state='gameover'; stopMusic(); }
     }
   }
@@ -877,7 +884,7 @@ function updatePlayer(dt) {
     } else if (bombsActive < MAX_BOMBS) {
       const tx=Math.floor((p.x+TILE/2)/TILE), ty=Math.floor((p.y+TILE/2)/TILE);
       if (!solid(tx,ty,true,playerGhost>0)) {
-        const b = {tx,ty,timer:BOMB_FUSE,sparkT:0,grace:0.9,isMega:playerMega,isDetonator:playerDetonator};
+        const b = {tx,ty,timer:BOMB_FUSE,sparkT:0,isMega:playerMega,isDetonator:playerDetonator};
         if (playerDetonator) { b.timer = 9999; detonatorBomb = b; playerDetonator = false; }
         if (playerMega) { playerMega = false; }
         bombs.push(b);
@@ -949,7 +956,7 @@ function updateRobots(dt) {
         r.bombTimer = 2.5 + Math.random()*3;
         const rtx = Math.round(r.x/TILE), rty = Math.round(r.y/TILE);
         if (!hasBomb(rtx, rty) && map[rty][rtx] !== WALL) {
-          bombs.push({tx:rtx, ty:rty, timer:BOMB_FUSE, sparkT:0, grace:0.9, isRobot:true});
+          bombs.push({tx:rtx, ty:rty, timer:BOMB_FUSE, sparkT:0, isRobot:true});
           bombsActive++;
         }
       }
@@ -963,7 +970,7 @@ function updateRobots(dt) {
         // Boss slam: place bomb at its position
         const rtx = Math.round(r.x/TILE), rty = Math.round(r.y/TILE);
         if (!hasBomb(rtx, rty)) {
-          bombs.push({tx:rtx, ty:rty, timer:1.5, sparkT:0, grace:0.9, isMega:true, isRobot:true});
+          bombs.push({tx:rtx, ty:rty, timer:1.5, sparkT:0, isMega:true, isRobot:true});
           bombsActive++;
           addShake(4);
           spawnParticles(r.x+TILE/2, r.y+TILE/2, '#ffcc00', 8, 100, 0.4, 4);
@@ -997,7 +1004,7 @@ function updateRobots(dt) {
 }
 
 function updateBombs(dt) {
-  bombs.forEach(b=>{ b.timer-=dt; b.sparkT+=dt; b.grace=Math.max(0,(b.grace||0)-dt); });
+  bombs.forEach(b=>{ b.timer-=dt; b.sparkT+=dt; });
   const exploding = bombs.filter(b=>b.timer<=0);
   bombs = bombs.filter(b=>b.timer>0);
   exploding.forEach(explode);
@@ -1216,6 +1223,7 @@ function killPlayer() {
     return;
   }
   player.alive=false; lives--;
+  keys = {};
   sfxPlayerDeath();
   const px=player.x+TILE/2, py=player.y+TILE/2;
   spawnParticles(px, py, '#ffe14d', 14, 200, 0.9, 5);
