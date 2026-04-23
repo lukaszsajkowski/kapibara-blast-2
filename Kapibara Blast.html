@@ -3,6 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <title>KAPIBARA BLAST</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
 <style>
 * { margin:0; padding:0; box-sizing:border-box; }
 body {
@@ -15,6 +16,7 @@ body {
   font-family: 'Courier New', monospace;
   user-select: none;
   overflow: hidden;
+  touch-action: none;
 }
 #title {
   color: #ffe14d;
@@ -45,6 +47,44 @@ canvas {
   color: #334;
   letter-spacing: 2px;
 }
+/* Touch controls */
+#touch-controls {
+  display: none;
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 180px;
+  pointer-events: none;
+  z-index: 100;
+}
+#touch-controls.active { display: flex; justify-content: space-between; align-items: flex-end; padding: 0 20px 20px; }
+.touch-btn {
+  pointer-events: auto;
+  width: 60px;
+  height: 60px;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.12);
+  border: 2px solid rgba(255,255,255,0.25);
+  color: #fff;
+  font-size: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  -webkit-tap-highlight-color: transparent;
+}
+.touch-btn:active, .touch-btn.pressed { background: rgba(255,225,77,0.35); border-color: #ffe14d; }
+#dpad { position: relative; width: 170px; height: 170px; }
+#dpad .touch-btn { position: absolute; }
+#dpad .up    { top:0; left:55px; }
+#dpad .down  { bottom:0; left:55px; }
+#dpad .left  { top:55px; left:0; }
+#dpad .right { top:55px; right:0; }
+#touch-actions { display:flex; flex-direction:column; gap:12px; align-items:center; }
+#touch-actions .touch-btn { width:70px; height:70px; font-size:14px; font-weight:bold; }
+#touch-actions .bomb-btn { background: rgba(255,60,60,0.2); border-color: rgba(255,60,60,0.4); }
+#touch-actions .bomb-btn:active, #touch-actions .bomb-btn.pressed { background: rgba(255,60,60,0.5); }
+#touch-actions .pause-btn { width:44px; height:44px; font-size:18px; background: rgba(255,255,255,0.08); }
 </style>
 </head>
 <body>
@@ -59,6 +99,19 @@ canvas {
 </div>
 <canvas id="c"></canvas>
 <div id="controls">WASD / STRZALKI — ruch &nbsp;&nbsp; SPACJA — bomba/detonator &nbsp;&nbsp; ESC — pauza &nbsp;&nbsp; M — mute &nbsp;&nbsp; R — restart</div>
+
+<div id="touch-controls">
+  <div id="dpad">
+    <div class="touch-btn up" data-dir="up">&#9650;</div>
+    <div class="touch-btn down" data-dir="down">&#9660;</div>
+    <div class="touch-btn left" data-dir="left">&#9664;</div>
+    <div class="touch-btn right" data-dir="right">&#9654;</div>
+  </div>
+  <div id="touch-actions">
+    <div class="touch-btn pause-btn" data-action="pause">&#9208;</div>
+    <div class="touch-btn bomb-btn" data-action="bomb">BOMBA</div>
+  </div>
+</div>
 
 <script>
 // ════════════════════════════════════════════════════════════════
@@ -122,6 +175,54 @@ const $bomb   = document.getElementById('bombEl');
 const $mute   = document.getElementById('muteEl');
 
 // ════════════════════════════════════════════════════════════════
+//  RESPONSIVE CANVAS
+// ════════════════════════════════════════════════════════════════
+function resizeCanvas() {
+  const maxW = window.innerWidth * 0.95;
+  const maxH = window.innerHeight * 0.78;
+  const scale = Math.min(maxW / W, maxH / H, 2);
+  canvas.style.width  = Math.floor(W * scale) + 'px';
+  canvas.style.height = Math.floor(H * scale) + 'px';
+}
+resizeCanvas();
+window.addEventListener('resize', resizeCanvas);
+
+// ════════════════════════════════════════════════════════════════
+//  LOCAL STORAGE — High Scores & Settings
+// ════════════════════════════════════════════════════════════════
+const LS_SCORES_KEY = 'kapibara_blast_highscores';
+const LS_SETTINGS_KEY = 'kapibara_blast_settings';
+
+function loadHighScores() {
+  try {
+    const raw = localStorage.getItem(LS_SCORES_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch(e) { return []; }
+}
+
+function saveHighScore(newScore, lvl) {
+  const scores = loadHighScores();
+  scores.push({ score: newScore, level: lvl, date: new Date().toLocaleDateString('pl-PL') });
+  scores.sort((a,b) => b.score - a.score);
+  if (scores.length > 10) scores.length = 10;
+  try { localStorage.setItem(LS_SCORES_KEY, JSON.stringify(scores)); } catch(e) {}
+  return scores;
+}
+
+function loadSettings() {
+  try {
+    const raw = localStorage.getItem(LS_SETTINGS_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch(e) { return {}; }
+}
+
+function saveSettings() {
+  try {
+    localStorage.setItem(LS_SETTINGS_KEY, JSON.stringify({ muted, musicMuted }));
+  } catch(e) {}
+}
+
+// ════════════════════════════════════════════════════════════════
 //  COLOR PALETTE
 // ════════════════════════════════════════════════════════════════
 const C = {
@@ -151,6 +252,8 @@ const C = {
 let audioCtx = null;
 let muted = false;
 let musicMuted = false;
+// Apply saved settings
+(function() { const s = loadSettings(); if (s.muted !== undefined) { muted = s.muted; musicMuted = s.musicMuted ?? s.muted; } })();
 let masterGain = null;
 let sfxGain = null;
 let musicGain = null;
@@ -459,6 +562,14 @@ let bombsActive = 0;
 let keys = {};
 let lastTime = 0;
 
+// Level summary tracking
+let levelScoreStart = 0;    // score at level start
+let levelComboMax = 0;       // best combo this level
+let levelTimeBonus = 0;      // time bonus awarded
+let summaryCounters = null;  // animated counter state for summary screen
+let showingHighScores = false; // menu: show high scores list
+let highScoreSaved = false;    // prevent double-saving
+
 // Phase 3 state
 let playerShield = false;
 let playerGhost = 0;       // timer — walk through crates
@@ -514,6 +625,7 @@ function reset() {
   shake=0; shakeT=0;
   playerShield=false; playerGhost=0; playerDetonator=false; playerMega=false;
   detonatorBomb=null; teleportCooldown=0; spikesTimer=0; playerSlide=null;
+  highScoreSaved=false; showingHighScores=false;
   ensureAudio();
   startLevel();
 }
@@ -572,6 +684,10 @@ function startLevel() {
   });
 
   levelTime = 0;
+  levelScoreStart = score;
+  levelComboMax = 0;
+  levelTimeBonus = 0;
+  summaryCounters = null;
   state = 'levelintro';
   levelTimer = 2.0;
   hud();
@@ -807,21 +923,47 @@ function update(dt) {
     checkIce(dt);
     if (robots.every(r=>!r.alive)) {
       // Time bonus
-      const timeBonus = Math.max(0, Math.floor((120 - levelTime) * 5));
-      if (timeBonus > 0) {
-        score += timeBonus;
-        spawnFloatingText(W/2, H/2 - 40, `CZAS +${timeBonus}`, '#44ddff');
+      levelTimeBonus = Math.max(0, Math.floor((120 - levelTime) * 5));
+      if (levelTimeBonus > 0) {
+        score += levelTimeBonus;
       }
+      // Init summary counters for animated count-up
+      const levelScore = score - levelScoreStart - levelTimeBonus;
+      summaryCounters = {
+        scoreTarget: levelScore, scoreCurrent: 0,
+        timeBonusTarget: levelTimeBonus, timeBonusCurrent: 0,
+        comboMax: levelComboMax,
+        totalTarget: score, totalCurrent: score - levelScore - levelTimeBonus,
+        phase: 0, phaseTimer: 0, done: false
+      };
       state='levelcomplete';
-      levelTimer = 2.5;
+      levelTimer = 0;
       sfxLevelComplete();
     }
   } else if (state==='levelcomplete') {
     updateParticles(dt);
     updateFloatingTexts(dt);
     updateRobotDebris(dt);
-    levelTimer -= dt;
-    if (levelTimer <= 0) startLevel();
+    levelTimer += dt;
+    // Animate summary counters
+    if (summaryCounters && !summaryCounters.done) {
+      const sc = summaryCounters;
+      sc.phaseTimer += dt;
+      const speed = 1.8; // counter speed
+      if (sc.phase === 0) {
+        sc.scoreCurrent = Math.min(sc.scoreTarget, sc.scoreCurrent + sc.scoreTarget * speed * dt);
+        if (sc.scoreCurrent >= sc.scoreTarget) { sc.scoreCurrent = sc.scoreTarget; sc.phase = 1; sc.phaseTimer = 0; }
+      } else if (sc.phase === 1) {
+        sc.timeBonusCurrent = Math.min(sc.timeBonusTarget, sc.timeBonusCurrent + Math.max(sc.timeBonusTarget, 100) * speed * dt);
+        if (sc.timeBonusCurrent >= sc.timeBonusTarget) { sc.timeBonusCurrent = sc.timeBonusTarget; sc.phase = 2; sc.phaseTimer = 0; }
+      } else if (sc.phase === 2) {
+        sc.totalCurrent = Math.min(sc.totalTarget, sc.totalCurrent + sc.totalTarget * speed * dt);
+        if (sc.totalCurrent >= sc.totalTarget) { sc.totalCurrent = sc.totalTarget; sc.phase = 3; sc.phaseTimer = 0; sc.done = true; }
+      }
+    }
+    // Wait for counters to finish + 1.5s, or 6s max, then key press to continue
+    if (summaryCounters && summaryCounters.done && levelTimer > 4.5) startLevel();
+    if (levelTimer > 8) startLevel();
   } else if (state==='dead') {
     updateParticles(dt);
     updateFloatingTexts(dt);
@@ -1146,6 +1288,7 @@ function addScore(amount, x, y, label) {
   }
   comboCount++;
   comboTimer = 1.5; // combo window
+  if (comboCount > levelComboMax) levelComboMax = comboCount;
   const total = amount * multiplier;
   score += total;
   const txt = multiplier > 1 ? `+${total} x${multiplier}` : `+${total}`;
@@ -2232,21 +2375,42 @@ function draw(t) {
 }
 
 function drawGameScreen(text, color) {
+  // Save high score on game over (once)
+  if (!highScoreSaved) {
+    highScoreSaved = true;
+    saveHighScore(score, level);
+  }
+
   ctx.fillStyle='rgba(5,5,15,0.78)';
   ctx.fillRect(0,0,W,H);
 
   ctx.textAlign='center';
   ctx.fillStyle=color;
   ctx.font=`900 62px 'Courier New'`;
-  ctx.fillText(text, W/2, H/2-28);
+  ctx.fillText(text, W/2, H/2-80);
 
   ctx.fillStyle='#ccc';
   ctx.font=`22px 'Courier New'`;
-  ctx.fillText(`WYNIK: ${score}  —  POZIOM: ${level}`, W/2, H/2+24);
+  ctx.fillText(`WYNIK: ${score}  —  POZIOM: ${level}`, W/2, H/2-30);
+
+  // Show top 5 high scores
+  const scores = loadHighScores();
+  if (scores.length > 0) {
+    ctx.fillStyle='#ffe14d';
+    ctx.font=`bold 16px 'Courier New'`;
+    ctx.fillText('NAJLEPSZE WYNIKI', W/2, H/2 + 10);
+    ctx.font=`14px 'Courier New'`;
+    const top5 = scores.slice(0, 5);
+    top5.forEach((s, i) => {
+      const isCurrentScore = (s.score === score && i === 0);
+      ctx.fillStyle = isCurrentScore ? '#44ff88' : '#889';
+      ctx.fillText(`${i+1}. ${s.score} pkt  —  poz. ${s.level}  —  ${s.date}`, W/2, H/2 + 34 + i * 20);
+    });
+  }
 
   ctx.fillStyle='#556';
   ctx.font=`15px 'Courier New'`;
-  ctx.fillText('NACISNIJ  R  ABY  ZAGRAC  PONOWNIE', W/2, H/2+68);
+  ctx.fillText('NACISNIJ  R  ABY  ZAGRAC  PONOWNIE', W/2, H/2 + 150);
 }
 
 function drawMenuScreen(t) {
@@ -2263,6 +2427,33 @@ function drawMenuScreen(t) {
     ctx.fillRect(sx, sy, 2, 2);
   }
   ctx.globalAlpha = 1;
+
+  if (showingHighScores) {
+    // High scores screen
+    ctx.textAlign='center';
+    ctx.fillStyle='#ffe14d';
+    ctx.font=`900 36px 'Courier New'`;
+    ctx.fillText('NAJLEPSZE WYNIKI', W/2, 80);
+
+    const scores = loadHighScores();
+    if (scores.length === 0) {
+      ctx.fillStyle='#556';
+      ctx.font=`16px 'Courier New'`;
+      ctx.fillText('BRAK WYNIKOW', W/2, H/2);
+    } else {
+      ctx.font=`15px 'Courier New'`;
+      scores.forEach((s, i) => {
+        ctx.fillStyle = i < 3 ? '#ffe14d' : '#889';
+        const medal = i===0 ? '🥇' : i===1 ? '🥈' : i===2 ? '🥉' : `${i+1}.`;
+        ctx.fillText(`${medal}  ${s.score} pkt  —  poz. ${s.level}  —  ${s.date}`, W/2, 130 + i * 32);
+      });
+    }
+
+    ctx.fillStyle='#556';
+    ctx.font=`14px 'Courier New'`;
+    ctx.fillText('NACISNIJ  ESC  ABY  WROCIC', W/2, H - 40);
+    return;
+  }
 
   // Title
   ctx.textAlign='center';
@@ -2283,13 +2474,17 @@ function drawMenuScreen(t) {
   if (blink) {
     ctx.fillStyle='#aab';
     ctx.font=`18px 'Courier New'`;
-    ctx.fillText('NACISNIJ  ENTER  ABY  GRAC', W/2, H/2 + 110);
+    ctx.fillText('NACISNIJ  ENTER  ABY  GRAC', W/2, H/2 + 100);
   }
+
+  ctx.fillStyle='#667';
+  ctx.font=`15px 'Courier New'`;
+  ctx.fillText('H — NAJLEPSZE WYNIKI', W/2, H/2 + 130);
 
   // Controls hint
   ctx.fillStyle='#445';
   ctx.font=`13px 'Courier New'`;
-  ctx.fillText('WASD / STRZALKI — ruch    SPACJA — bomba    ESC — pauza    M — mute', W/2, H/2 + 150);
+  ctx.fillText('WASD / STRZALKI — ruch    SPACJA — bomba    ESC — pauza    M — mute', W/2, H/2 + 160);
 }
 
 function drawLevelIntro() {
@@ -2308,17 +2503,72 @@ function drawLevelIntro() {
 }
 
 function drawLevelComplete() {
-  ctx.fillStyle='rgba(5,5,15,0.75)';
+  ctx.fillStyle='rgba(5,5,15,0.82)';
   ctx.fillRect(0,0,W,H);
 
   ctx.textAlign='center';
   ctx.fillStyle='#44ff88';
-  ctx.font=`900 42px 'Courier New'`;
-  ctx.fillText('POZIOM UKONCZONY!', W/2, H/2 - 20);
+  ctx.font=`900 38px 'Courier New'`;
+  ctx.fillText(`POZIOM ${level} UKONCZONY!`, W/2, H/2 - 100);
 
-  ctx.fillStyle='#ccc';
-  ctx.font=`20px 'Courier New'`;
-  ctx.fillText(`WYNIK: ${score}`, W/2, H/2 + 25);
+  if (summaryCounters) {
+    const sc = summaryCounters;
+    const baseY = H/2 - 45;
+    const lineH = 34;
+
+    // Score this level
+    ctx.fillStyle='#ccc';
+    ctx.font=`18px 'Courier New'`;
+    ctx.textAlign='left';
+    const lx = W/2 - 140, rx = W/2 + 140;
+
+    ctx.fillText('WYNIK ZA POZIOM:', lx, baseY);
+    ctx.textAlign='right';
+    ctx.fillStyle='#ffe14d';
+    ctx.fillText(Math.floor(sc.scoreCurrent).toString(), rx, baseY);
+
+    // Time bonus
+    ctx.textAlign='left';
+    ctx.fillStyle = sc.phase >= 1 ? '#ccc' : '#555';
+    ctx.fillText('BONUS CZASOWY:', lx, baseY + lineH);
+    ctx.textAlign='right';
+    ctx.fillStyle = sc.phase >= 1 ? '#44ddff' : '#555';
+    ctx.fillText(`+${Math.floor(sc.timeBonusCurrent)}`, rx, baseY + lineH);
+
+    // Max combo
+    ctx.textAlign='left';
+    ctx.fillStyle = sc.phase >= 1 ? '#ccc' : '#555';
+    ctx.fillText('NAJLEPSZE COMBO:', lx, baseY + lineH * 2);
+    ctx.textAlign='right';
+    ctx.fillStyle = sc.phase >= 1 ? '#ff8844' : '#555';
+    ctx.fillText(`x${sc.comboMax}`, rx, baseY + lineH * 2);
+
+    // Divider
+    if (sc.phase >= 2) {
+      ctx.strokeStyle='#445';
+      ctx.beginPath();
+      ctx.moveTo(lx, baseY + lineH * 2.7);
+      ctx.lineTo(rx, baseY + lineH * 2.7);
+      ctx.stroke();
+    }
+
+    // Total
+    ctx.textAlign='left';
+    ctx.fillStyle = sc.phase >= 2 ? '#fff' : '#555';
+    ctx.font=`bold 20px 'Courier New'`;
+    ctx.fillText('SUMA:', lx, baseY + lineH * 3.4);
+    ctx.textAlign='right';
+    ctx.fillStyle = sc.phase >= 2 ? '#ffe14d' : '#555';
+    ctx.fillText(Math.floor(sc.totalCurrent).toString(), rx, baseY + lineH * 3.4);
+
+    // Continue prompt
+    if (sc.done) {
+      ctx.textAlign='center';
+      ctx.fillStyle='#556';
+      ctx.font=`14px 'Courier New'`;
+      ctx.fillText('NACISNIJ DOWOLNY KLAWISZ...', W/2, baseY + lineH * 4.6);
+    }
+  }
 }
 
 function drawPauseScreen() {
@@ -2359,11 +2609,17 @@ window.addEventListener('keydown', e=>{
     ensureAudio();
     toggleMute();
     $mute.textContent = muted ? '🔇' : '🔊';
+    saveSettings();
     return;
   }
 
   if (state==='menu') {
+    if (showingHighScores) {
+      if (e.key==='Escape'||e.key==='Backspace') showingHighScores = false;
+      return;
+    }
     if (e.key==='Enter') { ensureAudio(); reset(); }
+    if (e.key==='h'||e.key==='H') showingHighScores = true;
     return;
   }
   if (state==='paused') {
@@ -2372,7 +2628,11 @@ window.addEventListener('keydown', e=>{
     return;
   }
   if (state==='gameover') {
-    if (e.key==='r'||e.key==='R') { state='menu'; }
+    if (e.key==='r'||e.key==='R') { highScoreSaved=false; state='menu'; }
+    return;
+  }
+  if (state==='levelcomplete') {
+    if (summaryCounters && summaryCounters.done) startLevel();
     return;
   }
   if (state==='playing') {
@@ -2390,7 +2650,77 @@ state = 'menu';
 map = mkMap(); player = mkPlayer(); robots=[]; bombs=[]; explosions=[]; powerups=[]; particles=[]; floatingTexts=[]; robotDebris=[];
 score=0; lives=3; level=1; levelTime=0; comboCount=0; comboTimer=0;
 shake=0; shakeT=0; bombsActive=0; playerSlide=null;
+highScoreSaved=false;
+// Apply saved mute state to UI
+$mute.textContent = muted ? '🔇' : '🔊';
 hud();
+
+// ════════════════════════════════════════════════════════════════
+//  TOUCH CONTROLS
+// ════════════════════════════════════════════════════════════════
+const isTouchDevice = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
+const touchEl = document.getElementById('touch-controls');
+if (isTouchDevice) {
+  touchEl.classList.add('active');
+  document.getElementById('controls').style.display = 'none';
+}
+
+// D-pad touch handling
+const dirKeyMap = { up:'ArrowUp', down:'ArrowDown', left:'ArrowLeft', right:'ArrowRight' };
+document.querySelectorAll('#dpad .touch-btn').forEach(btn => {
+  const dir = btn.dataset.dir;
+  const key = dirKeyMap[dir];
+
+  function press(e) {
+    e.preventDefault();
+    ensureAudio();
+    keys[key] = true;
+    btn.classList.add('pressed');
+    if (state==='menu' && !showingHighScores) reset();
+  }
+  function release(e) {
+    e.preventDefault();
+    keys[key] = false;
+    btn.classList.remove('pressed');
+  }
+  btn.addEventListener('touchstart', press, {passive:false});
+  btn.addEventListener('touchend', release, {passive:false});
+  btn.addEventListener('touchcancel', release, {passive:false});
+});
+
+// Action buttons
+document.querySelectorAll('#touch-actions .touch-btn').forEach(btn => {
+  const action = btn.dataset.action;
+  btn.addEventListener('touchstart', e => {
+    e.preventDefault();
+    ensureAudio();
+    btn.classList.add('pressed');
+    if (action === 'bomb') {
+      keys[' '] = true;
+      if (state==='menu' && !showingHighScores) reset();
+      if (state==='gameover') { highScoreSaved=false; state='menu'; }
+      if (state==='levelcomplete' && summaryCounters && summaryCounters.done) startLevel();
+    } else if (action === 'pause') {
+      if (state==='playing') state='paused';
+      else if (state==='paused') state='playing';
+    }
+  }, {passive:false});
+  btn.addEventListener('touchend', e => {
+    e.preventDefault();
+    btn.classList.remove('pressed');
+    if (action === 'bomb') keys[' '] = false;
+  }, {passive:false});
+  btn.addEventListener('touchcancel', e => {
+    e.preventDefault();
+    btn.classList.remove('pressed');
+    if (action === 'bomb') keys[' '] = false;
+  }, {passive:false});
+});
+
+// Prevent default touch behavior on canvas
+canvas.addEventListener('touchstart', e => e.preventDefault(), {passive:false});
+canvas.addEventListener('touchmove', e => e.preventDefault(), {passive:false});
+
 requestAnimationFrame(loop);
 </script>
 </body>
