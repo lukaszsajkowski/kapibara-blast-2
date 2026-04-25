@@ -683,7 +683,8 @@ function mkPlayer() {
 
 function mkRobot(tx, ty, type=RT_BASIC) {
   const dirs = [{dx:1,dy:0},{dx:-1,dy:0},{dx:0,dy:1},{dx:0,dy:-1}];
-  const hp = type===RT_BOSS ? 5 : type===RT_TANK ? 2 : type===RT_SPLITTER ? 1 : 1;
+  const bossHp = 1 + Math.floor(level / 5) * 2; // 3 at lvl5, 5 at lvl10, 7 at lvl15...
+  const hp = type===RT_BOSS ? bossHp : type===RT_TANK ? 2 : type===RT_SPLITTER ? 1 : 1;
   const r = { x:tx*TILE, y:ty*TILE,
            dir:dirs[Math.floor(Math.random()*4)],
            facing:1, frame:0, animT:0, alive:true,
@@ -699,7 +700,7 @@ function reset() {
   EXPL_RANGE = 2;
   MAX_BOMBS = 1;
   bombsActive = 0;
-  score=0; lives=3; level=0;
+  score=0; lives=3; level=4; // TEMP: start from 5 (incremented in startLevel)
   comboCount=0; comboTimer=0;
   bombs=[]; explosions=[]; powerups=[]; particles=[]; floatingTexts=[]; robotDebris=[];
   shake=0; shakeT=0;
@@ -710,7 +711,22 @@ function reset() {
   startLevel();
 }
 
+function isBossLevel(lvl) { return lvl >= 5 && lvl % 5 === 0; }
+
 function robotsForLevel(lvl) {
+  // Boss levels: boss + a few minions scaling with difficulty
+  if (isBossLevel(lvl)) {
+    const pool = [RT_BOSS];
+    const tier = Math.floor(lvl / 5); // 1 at lvl 5, 2 at lvl 10, ...
+    // A handful of minions to keep it interesting
+    const minions = Math.min(1 + tier, 4);
+    for (let i=0; i<minions; i++) pool.push(RT_BASIC);
+    if (tier >= 2) pool.push(RT_CHASER);
+    if (tier >= 3) pool.push(RT_TANK);
+    if (tier >= 4) pool.push(RT_BOMBER);
+    return pool;
+  }
+
   const pool = [];
   // Always some basics
   const basics = Math.max(1, 2 + Math.floor(lvl * 0.3));
@@ -727,8 +743,6 @@ function robotsForLevel(lvl) {
   if (lvl >= 5) { const n = Math.min(1 + Math.floor((lvl-5)*0.25), 2); for (let i=0;i<n;i++) pool.push(RT_BOMBER); }
   // Splitter robots from level 6
   if (lvl >= 6) { const n = Math.min(1 + Math.floor((lvl-6)*0.2), 2); for (let i=0;i<n;i++) pool.push(RT_SPLITTER); }
-  // Boss every 5 levels
-  if (lvl >= 5 && lvl % 5 === 0) pool.push(RT_BOSS);
   return pool;
 }
 
@@ -1184,15 +1198,16 @@ function updateRobots(dt) {
       }
     }
 
-    // Boss: special attack — shockwave particles
+    // Boss: special attack — scales with tier
     if (r.type === RT_BOSS) {
       r.attackTimer = (r.attackTimer||0) - dt;
       if (r.attackTimer <= 0) {
-        r.attackTimer = 3 + Math.random()*2;
-        // Boss slam: place bomb at its position
+        const bossTier = Math.floor(level / 5); // 1 at lvl5, 2 at lvl10...
+        r.attackTimer = bossTier >= 3 ? 2 + Math.random()*1.5 : 3 + Math.random()*2;
         const rtx = Math.round(r.x/TILE), rty = Math.round(r.y/TILE);
         if (!hasBomb(rtx, rty)) {
-          bombs.push({tx:rtx, ty:rty, timer:1.5, sparkT:0, isMega:true, isRobot:true});
+          const useMega = bossTier >= 3; // mega bombs from lvl 15+
+          bombs.push({tx:rtx, ty:rty, timer:1.5, sparkT:0, isMega:useMega, isRobot:true});
           bombsActive++;
           addShake(4);
           spawnParticles(r.x+TILE/2, r.y+TILE/2, '#ffcc00', 8, 100, 0.4, 4);
@@ -1269,7 +1284,7 @@ function explode(bomb) {
     }
   });
   cells.forEach(([x,y])=>{
-    explosions.push({x,y,timer:EXPL_TIME});
+    explosions.push({x,y,timer:EXPL_TIME,isRobot:!!bomb.isRobot});
     const cx=x*TILE+TILE/2, cy=y*TILE+TILE/2;
     spawnParticles(cx, cy, '#ffe14d', 5, 160, 0.45, 4);
     spawnParticles(cx, cy, '#ff6600', 4, 100, 0.35, 5);
@@ -1386,7 +1401,7 @@ function checkHits() {
   robots.forEach(r=>{
     if (!r.alive) return;
     const rtx=Math.round(r.x/TILE), rty=Math.round(r.y/TILE);
-    if ((r.invince||0)<=0 && explosions.some(e=>e.x===rtx&&e.y===rty)) {
+    if ((r.invince||0)<=0 && explosions.some(e=>e.x===rtx&&e.y===rty&&!(r.type===RT_BOSS&&e.isRobot))) {
       r.hp--;
       r.invince = 0.8;
       if (r.hp <= 0) {
@@ -2584,10 +2599,16 @@ function drawLevelIntro() {
   ctx.font=`900 52px 'Courier New'`;
   ctx.fillText(`POZIOM ${level}`, W/2, H/2 - 10);
 
-  const robotCount = robots.length;
-  ctx.fillStyle='#889';
-  ctx.font=`18px 'Courier New'`;
-  ctx.fillText(`ROBOTY: ${robotCount}`, W/2, H/2 + 35);
+  if (isBossLevel(level)) {
+    ctx.fillStyle='#ff4444';
+    ctx.font=`900 32px 'Courier New'`;
+    ctx.fillText('⚠ WALKA Z BOSSEM! ⚠', W/2, H/2 + 40);
+  } else {
+    const robotCount = robots.length;
+    ctx.fillStyle='#889';
+    ctx.font=`18px 'Courier New'`;
+    ctx.fillText(`ROBOTY: ${robotCount}`, W/2, H/2 + 35);
+  }
 }
 
 function drawLevelComplete() {
