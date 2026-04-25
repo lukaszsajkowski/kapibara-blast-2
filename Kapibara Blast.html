@@ -1791,14 +1791,20 @@ function drawIce(px, py) {
 }
 
 function drawSpikes(px, py, active, t) {
-  // Floor base
-  ctx.fillStyle = (Math.floor(px/TILE)+Math.floor(py/TILE))%2===0?C.floorA:C.floorB;
+  // Distinct dark-red tinted floor for spike tiles
+  ctx.fillStyle = '#1c1014';
   ctx.fillRect(px, py, TILE, TILE);
+  // Subtle danger border always visible
+  ctx.save();
+  ctx.strokeStyle = 'rgba(180,50,40,0.25)';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(px+1, py+1, TILE-2, TILE-2);
+  ctx.restore();
   if (!active) {
-    // Retracted — show holes
+    // Retracted — show holes on tinted floor
     ctx.save();
-    ctx.globalAlpha = 0.3;
-    ctx.fillStyle = '#2a1a1a';
+    ctx.globalAlpha = 0.4;
+    ctx.fillStyle = '#3a1a1a';
     const spots = [[0.25,0.25],[0.75,0.25],[0.5,0.5],[0.25,0.75],[0.75,0.75]];
     spots.forEach(([sx,sy]) => {
       ctx.beginPath(); ctx.arc(px+TILE*sx, py+TILE*sy, 3, 0, Math.PI*2); ctx.fill();
