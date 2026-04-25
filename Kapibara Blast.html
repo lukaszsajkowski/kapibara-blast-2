@@ -40,6 +40,7 @@ canvas {
   image-rendering: crisp-edges;
   border: 3px solid #2a2a4a;
   box-shadow: 0 0 80px #ffe14d18, inset 0 0 30px #0006;
+  cursor: none;
 }
 #controls {
   margin-top: 10px;
@@ -2833,6 +2834,10 @@ document.querySelectorAll('#touch-actions .touch-btn').forEach(btn => {
 // Prevent default touch behavior on canvas
 canvas.addEventListener('touchstart', e => e.preventDefault(), {passive:false});
 canvas.addEventListener('touchmove', e => e.preventDefault(), {passive:false});
+
+// Prevent mouse clicks from disrupting gameplay
+document.addEventListener('mousedown', e => { if (state === 'playing' || state === 'paused' || state === 'levelintro' || state === 'levelcomplete') e.preventDefault(); });
+document.addEventListener('contextmenu', e => { if (state !== 'menu') e.preventDefault(); });
 
 requestAnimationFrame(loop);
 </script>
