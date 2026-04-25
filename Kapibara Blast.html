@@ -85,6 +85,45 @@ canvas {
 #touch-actions .bomb-btn { background: rgba(255,60,60,0.2); border-color: rgba(255,60,60,0.4); }
 #touch-actions .bomb-btn:active, #touch-actions .bomb-btn.pressed { background: rgba(255,60,60,0.5); }
 #touch-actions .pause-btn { width:44px; height:44px; font-size:18px; background: rgba(255,255,255,0.08); }
+/* Name input overlay */
+#name-overlay {
+  display: none;
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(5,5,15,0.85);
+  z-index: 200;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  font-family: 'Courier New', monospace;
+}
+#name-overlay.active { display: flex; }
+#name-overlay label {
+  color: #ffe14d;
+  font-size: 22px;
+  font-weight: 900;
+  letter-spacing: 3px;
+  margin-bottom: 16px;
+}
+#name-overlay input {
+  background: #181830;
+  border: 2px solid #ffe14d;
+  color: #fff;
+  font-family: 'Courier New', monospace;
+  font-size: 22px;
+  padding: 8px 16px;
+  text-align: center;
+  width: 260px;
+  outline: none;
+  letter-spacing: 2px;
+}
+#name-overlay input::placeholder { color: #556; }
+#name-overlay .hint {
+  color: #556;
+  font-size: 13px;
+  margin-top: 12px;
+  letter-spacing: 1px;
+}
 </style>
 </head>
 <body>
@@ -98,6 +137,11 @@ canvas {
   <div id="muteEl" style="color:#556">🔊</div>
 </div>
 <canvas id="c"></canvas>
+<div id="name-overlay">
+  <label>PODAJ IMIE</label>
+  <input type="text" id="name-input" maxlength="16" placeholder="GRACZ" autocomplete="off" />
+  <div class="hint">ENTER — ZATWIERDZ</div>
+</div>
 <div id="controls">WASD / STRZALKI — ruch &nbsp;&nbsp; SPACJA — bomba/detonator &nbsp;&nbsp; ESC — pauza &nbsp;&nbsp; M — mute &nbsp;&nbsp; R — restart</div>
 
 <div id="touch-controls">
@@ -192,6 +236,42 @@ window.addEventListener('resize', resizeCanvas);
 // ════════════════════════════════════════════════════════════════
 const LS_SCORES_KEY = 'kapibara_blast_highscores';
 const LS_SETTINGS_KEY = 'kapibara_blast_settings';
+const LS_PLAYER_NAME_KEY = 'kapibara_blast_player_name';
+
+const $nameOverlay = document.getElementById('name-overlay');
+const $nameInput = document.getElementById('name-input');
+
+let pendingScore = null; // { score, level } waiting for name input
+
+function loadPlayerName() {
+  try { return localStorage.getItem(LS_PLAYER_NAME_KEY) || ''; } catch(e) { return ''; }
+}
+function savePlayerName(name) {
+  try { localStorage.setItem(LS_PLAYER_NAME_KEY, name); } catch(e) {}
+}
+
+function showNameInput(newScore, lvl) {
+  pendingScore = { score: newScore, level: lvl };
+  $nameInput.value = loadPlayerName();
+  $nameOverlay.classList.add('active');
+  $nameInput.focus();
+  $nameInput.select();
+}
+
+function confirmNameInput() {
+  if (!pendingScore) return;
+  const name = $nameInput.value.trim() || 'GRACZ';
+  savePlayerName(name);
+  $nameOverlay.classList.remove('active');
+  saveHighScore(pendingScore.score, pendingScore.level, name);
+  pendingScore = null;
+  canvas.focus();
+}
+
+$nameInput.addEventListener('keydown', e => {
+  e.stopPropagation();
+  if (e.key === 'Enter') confirmNameInput();
+});
 
 function loadHighScores() {
   try {
@@ -200,9 +280,9 @@ function loadHighScores() {
   } catch(e) { return []; }
 }
 
-function saveHighScore(newScore, lvl) {
+function saveHighScore(newScore, lvl, name) {
   const scores = loadHighScores();
-  scores.push({ score: newScore, level: lvl, date: new Date().toLocaleDateString('pl-PL') });
+  scores.push({ score: newScore, level: lvl, name: name || 'GRACZ', date: new Date().toLocaleDateString('pl-PL') });
   scores.sort((a,b) => b.score - a.score);
   if (scores.length > 10) scores.length = 10;
   try { localStorage.setItem(LS_SCORES_KEY, JSON.stringify(scores)); } catch(e) {}
@@ -2375,10 +2455,10 @@ function draw(t) {
 }
 
 function drawGameScreen(text, color) {
-  // Save high score on game over (once)
+  // Save high score on game over (once) — show name input
   if (!highScoreSaved) {
     highScoreSaved = true;
-    saveHighScore(score, level);
+    showNameInput(score, level);
   }
 
   ctx.fillStyle='rgba(5,5,15,0.78)';
@@ -2404,7 +2484,8 @@ function drawGameScreen(text, color) {
     top5.forEach((s, i) => {
       const isCurrentScore = (s.score === score && i === 0);
       ctx.fillStyle = isCurrentScore ? '#44ff88' : '#889';
-      ctx.fillText(`${i+1}. ${s.score} pkt  —  poz. ${s.level}  —  ${s.date}`, W/2, H/2 + 34 + i * 20);
+      const name = s.name || 'GRACZ';
+      ctx.fillText(`${i+1}. ${name}  ${s.score} pkt  —  poz. ${s.level}  —  ${s.date}`, W/2, H/2 + 34 + i * 20);
     });
   }
 
@@ -2445,7 +2526,8 @@ function drawMenuScreen(t) {
       scores.forEach((s, i) => {
         ctx.fillStyle = i < 3 ? '#ffe14d' : '#889';
         const medal = i===0 ? '🥇' : i===1 ? '🥈' : i===2 ? '🥉' : `${i+1}.`;
-        ctx.fillText(`${medal}  ${s.score} pkt  —  poz. ${s.level}  —  ${s.date}`, W/2, 130 + i * 32);
+        const name = s.name || 'GRACZ';
+        ctx.fillText(`${medal}  ${name}  ${s.score} pkt  —  poz. ${s.level}  —  ${s.date}`, W/2, 130 + i * 32);
       });
     }
 
@@ -2628,7 +2710,11 @@ window.addEventListener('keydown', e=>{
     return;
   }
   if (state==='gameover') {
-    if (e.key==='r'||e.key==='R') { highScoreSaved=false; state='menu'; }
+    if (e.key==='r'||e.key==='R') {
+      if (pendingScore) confirmNameInput();
+      $nameOverlay.classList.remove('active');
+      highScoreSaved=false; state='menu';
+    }
     return;
   }
   if (state==='levelcomplete') {
@@ -2698,7 +2784,7 @@ document.querySelectorAll('#touch-actions .touch-btn').forEach(btn => {
     if (action === 'bomb') {
       keys[' '] = true;
       if (state==='menu' && !showingHighScores) reset();
-      if (state==='gameover') { highScoreSaved=false; state='menu'; }
+      if (state==='gameover') { if(pendingScore)confirmNameInput(); $nameOverlay.classList.remove('active'); highScoreSaved=false; state='menu'; }
       if (state==='levelcomplete' && summaryCounters && summaryCounters.done) startLevel();
     } else if (action === 'pause') {
       if (state==='playing') state='paused';
