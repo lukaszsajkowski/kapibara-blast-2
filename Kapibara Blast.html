@@ -701,7 +701,7 @@ function reset() {
   EXPL_RANGE = 2;
   MAX_BOMBS = 1;
   bombsActive = 0;
-  score=0; lives=3; level=4; // TEMP: start from 5 (incremented in startLevel)
+  score=0; lives=3; level=0;
   comboCount=0; comboTimer=0;
   bombs=[]; explosions=[]; powerups=[]; particles=[]; floatingTexts=[]; robotDebris=[];
   shake=0; shakeT=0;
@@ -749,14 +749,33 @@ function robotsForLevel(lvl) {
 
 function spawnPositions(count) {
   // Corners + center + edge mids, avoiding player start (1,1)
-  const spots = [
+  const preferred = [
     [COLS-2, 1], [1, ROWS-2], [COLS-2, ROWS-2],
     [Math.floor(COLS/2), Math.floor(ROWS/2)],
     [Math.floor(COLS/2), 1], [Math.floor(COLS/2), ROWS-2],
     [1, Math.floor(ROWS/2)], [COLS-2, Math.floor(ROWS/2)],
   ];
+  // Collect all free floor tiles away from player start
+  const free = [];
+  for (let y=1;y<ROWS-1;y++) for (let x=1;x<COLS-1;x++) {
+    if (map[y][x]===FLOOR && !(x<=2 && y<=2)) free.push([x,y]);
+  }
+  const used = new Set();
   const result = [];
-  for (let i=0; i<count; i++) result.push(spots[i % spots.length]);
+  for (let i=0; i<count; i++) {
+    const pref = preferred[i % preferred.length];
+    if (pref && map[pref[1]][pref[0]]===FLOOR && !used.has(`${pref[0]},${pref[1]}`)) {
+      result.push(pref);
+      used.add(`${pref[0]},${pref[1]}`);
+    } else {
+      // Find a random free tile not yet used
+      for (let tries=0; tries<100; tries++) {
+        const candidate = free[Math.floor(Math.random()*free.length)];
+        const key = `${candidate[0]},${candidate[1]}`;
+        if (!used.has(key)) { result.push(candidate); used.add(key); break; }
+      }
+    }
+  }
   return result;
 }
 
@@ -1314,7 +1333,7 @@ function updatePowerups(dt) {
   powerups.forEach(p=>{ p.animT=(p.animT||0)+dt; });
   powerups = powerups.filter(pu=>{
     const px=Math.round(player.x/TILE), py=Math.round(player.y/TILE);
-    if (pu.tx===px && pu.ty===py) {
+    if (pu.tx===px && pu.ty===py && !isMaxedOut(pu.type)) {
       applyPowerup(pu.type);
       sfxPowerup();
       // pickup sparkle
@@ -1324,6 +1343,17 @@ function updatePowerups(dt) {
     }
     return true;
   });
+}
+
+function isMaxedOut(type) {
+  if (type===PU_RANGE)  return EXPL_RANGE >= 5;
+  if (type===PU_SPEED)  return PLAYER_SPEED >= 6.5*TILE;
+  if (type===PU_LIFE)   return lives >= 5;
+  if (type===PU_BOMBS)  return MAX_BOMBS >= 4;
+  if (type===PU_SHIELD) return playerShield === true;
+  if (type===PU_DETONATOR) return playerDetonator === true;
+  if (type===PU_MEGA)   return playerMega === true;
+  return false;
 }
 
 function applyPowerup(type) {
