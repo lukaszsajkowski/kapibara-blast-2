@@ -238,6 +238,8 @@ window.addEventListener('resize', resizeCanvas);
 const LS_SCORES_KEY = 'kapibara_blast_highscores';
 const LS_SETTINGS_KEY = 'kapibara_blast_settings';
 const LS_PLAYER_NAME_KEY = 'kapibara_blast_player_name';
+const LS_SAVE_KEY = 'kapibara_blast_save';
+const SAVE_VERSION = 1;
 
 const $nameOverlay = document.getElementById('name-overlay');
 const $nameInput = document.getElementById('name-input');
@@ -301,6 +303,134 @@ function saveSettings() {
   try {
     localStorage.setItem(LS_SETTINGS_KEY, JSON.stringify({ muted, musicMuted }));
   } catch(e) {}
+}
+
+function hasSavedGame() {
+  try {
+    return !!localStorage.getItem(LS_SAVE_KEY);
+  } catch(e) { return false; }
+}
+
+function clearSavedGame() {
+  try { localStorage.removeItem(LS_SAVE_KEY); } catch(e) {}
+}
+
+function canSaveGameState() {
+  return state === 'playing' || state === 'levelintro' || state === 'paused';
+}
+
+function buildSaveData() {
+  return {
+    version: SAVE_VERSION,
+    savedAt: new Date().toISOString(),
+    game: {
+      state,
+      map,
+      player,
+      robots,
+      bombs,
+      explosions,
+      powerups,
+      particles,
+      floatingTexts,
+      robotDebris,
+      score,
+      lives,
+      level,
+      levelTimer,
+      levelTime,
+      deathTimer,
+      shake,
+      shakeT,
+      comboCount,
+      comboTimer,
+      bombsActive,
+      levelScoreStart,
+      levelComboMax,
+      levelTimeBonus,
+      playerShield,
+      playerGhost,
+      playerDetonator,
+      playerMega,
+      teleportCooldown,
+      spikesTimer,
+      playerSlide,
+      PLAYER_SPEED,
+      EXPL_RANGE,
+      MAX_BOMBS,
+      detonatorBombIndex: detonatorBomb ? bombs.indexOf(detonatorBomb) : -1,
+    }
+  };
+}
+
+function saveGameState() {
+  if (!canSaveGameState()) return;
+  try {
+    localStorage.setItem(LS_SAVE_KEY, JSON.stringify(buildSaveData()));
+  } catch(e) {}
+}
+
+function loadGameState() {
+  try {
+    const raw = localStorage.getItem(LS_SAVE_KEY);
+    if (!raw) return false;
+    const parsed = JSON.parse(raw);
+    if (!parsed || parsed.version !== SAVE_VERSION || !parsed.game) {
+      clearSavedGame();
+      return false;
+    }
+
+    const g = parsed.game;
+    map = Array.isArray(g.map) ? g.map : mkMap();
+    player = g.player && typeof g.player.x === 'number' && typeof g.player.y === 'number' ? g.player : mkPlayer();
+    robots = Array.isArray(g.robots) ? g.robots : [];
+    bombs = Array.isArray(g.bombs) ? g.bombs : [];
+    explosions = Array.isArray(g.explosions) ? g.explosions : [];
+    powerups = Array.isArray(g.powerups) ? g.powerups : [];
+    particles = Array.isArray(g.particles) ? g.particles : [];
+    floatingTexts = Array.isArray(g.floatingTexts) ? g.floatingTexts : [];
+    robotDebris = Array.isArray(g.robotDebris) ? g.robotDebris : [];
+
+    score = typeof g.score === 'number' ? g.score : 0;
+    lives = typeof g.lives === 'number' ? g.lives : 3;
+    level = typeof g.level === 'number' ? g.level : 1;
+    levelTimer = typeof g.levelTimer === 'number' ? g.levelTimer : 0;
+    levelTime = typeof g.levelTime === 'number' ? g.levelTime : 0;
+    deathTimer = typeof g.deathTimer === 'number' ? g.deathTimer : 0;
+    shake = typeof g.shake === 'number' ? g.shake : 0;
+    shakeT = typeof g.shakeT === 'number' ? g.shakeT : 0;
+    comboCount = typeof g.comboCount === 'number' ? g.comboCount : 0;
+    comboTimer = typeof g.comboTimer === 'number' ? g.comboTimer : 0;
+    bombsActive = typeof g.bombsActive === 'number' ? g.bombsActive : bombs.length;
+    levelScoreStart = typeof g.levelScoreStart === 'number' ? g.levelScoreStart : score;
+    levelComboMax = typeof g.levelComboMax === 'number' ? g.levelComboMax : 0;
+    levelTimeBonus = typeof g.levelTimeBonus === 'number' ? g.levelTimeBonus : 0;
+    playerShield = !!g.playerShield;
+    playerGhost = typeof g.playerGhost === 'number' ? g.playerGhost : 0;
+    playerDetonator = !!g.playerDetonator;
+    playerMega = !!g.playerMega;
+    teleportCooldown = typeof g.teleportCooldown === 'number' ? g.teleportCooldown : 0;
+    spikesTimer = typeof g.spikesTimer === 'number' ? g.spikesTimer : 0;
+    playerSlide = g.playerSlide && typeof g.playerSlide.dx === 'number' && typeof g.playerSlide.dy === 'number' ? g.playerSlide : null;
+    PLAYER_SPEED = typeof g.PLAYER_SPEED === 'number' ? g.PLAYER_SPEED : 3.8 * TILE;
+    EXPL_RANGE = typeof g.EXPL_RANGE === 'number' ? g.EXPL_RANGE : 2;
+    MAX_BOMBS = typeof g.MAX_BOMBS === 'number' ? g.MAX_BOMBS : 1;
+    detonatorBomb = Number.isInteger(g.detonatorBombIndex) && g.detonatorBombIndex >= 0 ? bombs[g.detonatorBombIndex] || null : null;
+
+    keys = {};
+    pendingScore = null;
+    $nameOverlay.classList.remove('active');
+    showingHighScores = false;
+    highScoreSaved = false;
+    summaryCounters = null;
+    state = 'paused';
+    stopMusic();
+    hud();
+    return true;
+  } catch(e) {
+    clearSavedGame();
+    return false;
+  }
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -712,6 +842,11 @@ function reset() {
   startLevel();
 }
 
+function startNewGame() {
+  clearSavedGame();
+  reset();
+}
+
 function isBossLevel(lvl) { return lvl >= 5 && lvl % 5 === 0; }
 
 function robotsForLevel(lvl) {
@@ -805,6 +940,7 @@ function startLevel() {
   state = 'levelintro';
   levelTimer = 2.0;
   hud();
+  saveGameState();
 }
 
 function placeMapElements() {
@@ -1013,6 +1149,7 @@ function update(dt) {
     if (levelTimer <= 0) {
       state='playing';
       if (!musicMuted && !musicPlaying) startMusic();
+      saveGameState();
     }
   } else if (state==='paused') {
     // frozen
@@ -1084,8 +1221,13 @@ function update(dt) {
     updateRobotDebris(dt);
     deathTimer -= dt;
     if (deathTimer<=0) {
-      if (lives>0) { player=mkPlayer(); player.invince=2.5; state='playing'; }
-      else { state='gameover'; stopMusic(); }
+      if (lives>0) {
+        player=mkPlayer(); player.invince=2.5; state='playing';
+        saveGameState();
+      }
+      else {
+        state='gameover'; stopMusic(); clearSavedGame();
+      }
     }
   }
 }
@@ -1148,6 +1290,7 @@ function updatePlayer(dt) {
         p.bombCooldown=0.25;
         sfxBombPlace();
         hud();
+        saveGameState();
       }
     }
   }
@@ -1265,6 +1408,7 @@ function updateBombs(dt) {
   const exploding = bombs.filter(b=>b.timer<=0);
   bombs = bombs.filter(b=>b.timer>0);
   exploding.forEach(explode);
+  if (exploding.length) saveGameState();
 }
 
 function spawnParticles(px, py, color, count, speed, life, size=3) {
@@ -1365,6 +1509,8 @@ function applyPowerup(type) {
   if (type===PU_GHOST)  { playerGhost = 8; score+=50; spawnFloatingText(player.x+TILE/2, player.y, 'DUCH 8s!', '#bb88ff'); }
   if (type===PU_DETONATOR) { playerDetonator = true; score+=50; spawnFloatingText(player.x+TILE/2, player.y, 'DETONATOR!', '#ff4444'); }
   if (type===PU_MEGA)   { playerMega = true; score+=50; spawnFloatingText(player.x+TILE/2, player.y, 'MEGA BOMBA!', '#ff00ff'); }
+  hud();
+  saveGameState();
 }
 
 function updateParticles(dt) {
@@ -2605,15 +2751,16 @@ function drawMenuScreen(t) {
 
   // Prompt
   const blink = Math.floor(t*2)%2===0;
+  const saveExists = hasSavedGame();
   if (blink) {
     ctx.fillStyle='#aab';
     ctx.font=`18px 'Courier New'`;
-    ctx.fillText('NACISNIJ  ENTER  ABY  GRAC', W/2, H/2 + 100);
+    ctx.fillText(saveExists ? 'ENTER — KONTYNUUJ' : 'NACISNIJ  ENTER  ABY  GRAC', W/2, H/2 + 100);
   }
 
   ctx.fillStyle='#667';
   ctx.font=`15px 'Courier New'`;
-  ctx.fillText('H — NAJLEPSZE WYNIKI', W/2, H/2 + 130);
+  ctx.fillText(saveExists ? 'N — NOWA GRA    H — NAJLEPSZE WYNIKI' : 'H — NAJLEPSZE WYNIKI', W/2, H/2 + 130);
 
   // Controls hint
   ctx.fillStyle='#445';
@@ -2758,13 +2905,17 @@ window.addEventListener('keydown', e=>{
       if (e.key==='Escape'||e.key==='Backspace') showingHighScores = false;
       return;
     }
-    if (e.key==='Enter') { ensureAudio(); reset(); }
+    if (e.key==='Enter') {
+      ensureAudio();
+      if (!loadGameState()) startNewGame();
+    }
+    if (e.key==='n'||e.key==='N') { ensureAudio(); startNewGame(); }
     if (e.key==='h'||e.key==='H') showingHighScores = true;
     return;
   }
   if (state==='paused') {
-    if (e.key==='Escape'||e.key==='p'||e.key==='P') state='playing';
-    else if (e.key==='r'||e.key==='R') reset();
+    if (e.key==='Escape'||e.key==='p'||e.key==='P') { state='playing'; saveGameState(); }
+    else if (e.key==='r'||e.key==='R') startNewGame();
     return;
   }
   if (state==='gameover') {
@@ -2780,9 +2931,9 @@ window.addEventListener('keydown', e=>{
     return;
   }
   if (state==='playing') {
-    if (e.key==='Escape'||e.key==='p'||e.key==='P') { state='paused'; return; }
+    if (e.key==='Escape'||e.key==='p'||e.key==='P') { state='paused'; saveGameState(); return; }
   }
-  if (e.key==='r'||e.key==='R') reset();
+  if (e.key==='r'||e.key==='R') startNewGame();
 });
 window.addEventListener('keyup', e=>{ keys[e.key]=false; });
 
@@ -2820,7 +2971,9 @@ document.querySelectorAll('#dpad .touch-btn').forEach(btn => {
     ensureAudio();
     keys[key] = true;
     btn.classList.add('pressed');
-    if (state==='menu' && !showingHighScores) reset();
+    if (state==='menu' && !showingHighScores) {
+      if (!loadGameState()) startNewGame();
+    }
   }
   function release(e) {
     e.preventDefault();
@@ -2841,12 +2994,14 @@ document.querySelectorAll('#touch-actions .touch-btn').forEach(btn => {
     btn.classList.add('pressed');
     if (action === 'bomb') {
       keys[' '] = true;
-      if (state==='menu' && !showingHighScores) reset();
+      if (state==='menu' && !showingHighScores) {
+        if (!loadGameState()) startNewGame();
+      }
       if (state==='gameover') { if(pendingScore)confirmNameInput(); $nameOverlay.classList.remove('active'); highScoreSaved=false; state='menu'; }
       if (state==='levelcomplete' && summaryCounters && summaryCounters.done) startLevel();
     } else if (action === 'pause') {
-      if (state==='playing') state='paused';
-      else if (state==='paused') state='playing';
+      if (state==='playing') { state='paused'; saveGameState(); }
+      else if (state==='paused') { state='playing'; saveGameState(); }
     }
   }, {passive:false});
   btn.addEventListener('touchend', e => {
