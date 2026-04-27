@@ -915,6 +915,7 @@ function spawnPositions(count) {
 }
 
 function startLevel() {
+  if (state==='levelintro') return; // guard against double-call
   level++;
   map = mkMap();
   placeMapElements();
@@ -923,6 +924,7 @@ function startLevel() {
   bombsActive = 0;
   bombs=[]; explosions=[]; powerups=[]; robotDebris=[];
   detonatorBomb=null; teleportCooldown=0; spikesTimer=0;
+  playerGhost=0; playerShield=false; playerDetonator=false; playerMega=false;
 
   const types = robotsForLevel(level);
   const positions = spawnPositions(types.length);
@@ -1157,7 +1159,37 @@ function update(dt) {
     levelTime += dt;
     spikesTimer += dt;
     teleportCooldown = Math.max(0, teleportCooldown - dt);
+    const wasGhost = playerGhost > 0;
     playerGhost = Math.max(0, playerGhost - dt);
+    // Push player out of crate when ghost expires
+    if (wasGhost && playerGhost <= 0) {
+      if (!canGo(player.x, player.y, 0.7, false)) {
+        // Find nearest free tile using BFS from player's current tile
+        const ptx = Math.round(player.x / TILE);
+        const pty = Math.round(player.y / TILE);
+        const visited = new Set();
+        const queue = [[ptx, pty]];
+        visited.add(ptx+','+pty);
+        let found = false;
+        while (queue.length > 0 && !found) {
+          const [cx, cy] = queue.shift();
+          const snapX = cx * TILE, snapY = cy * TILE;
+          if (canGo(snapX, snapY, 0.7, false)) {
+            player.x = snapX;
+            player.y = snapY;
+            found = true;
+            break;
+          }
+          for (const [nx, ny] of [[cx-1,cy],[cx+1,cy],[cx,cy-1],[cx,cy+1]]) {
+            const key = nx+','+ny;
+            if (!visited.has(key) && nx>=0 && ny>=0 && nx<COLS && ny<ROWS) {
+              visited.add(key);
+              queue.push([nx, ny]);
+            }
+          }
+        }
+      }
+    }
     comboTimer = Math.max(0, comboTimer - dt);
     if (comboTimer <= 0) comboCount = 0;
     updatePlayer(dt);
@@ -1212,9 +1244,9 @@ function update(dt) {
         if (sc.totalCurrent >= sc.totalTarget) { sc.totalCurrent = sc.totalTarget; sc.phase = 3; sc.phaseTimer = 0; sc.done = true; }
       }
     }
-    // Wait for counters to finish + 1.5s, or 6s max, then key press to continue
+    // Wait for counters to finish + 1.5s, or 8s max, then auto-advance
     if (summaryCounters && summaryCounters.done && levelTimer > 4.5) startLevel();
-    if (levelTimer > 8) startLevel();
+    else if (levelTimer > 8) startLevel();
   } else if (state==='dead') {
     updateParticles(dt);
     updateFloatingTexts(dt);
@@ -2974,6 +3006,7 @@ document.querySelectorAll('#dpad .touch-btn').forEach(btn => {
     if (state==='menu' && !showingHighScores) {
       if (!loadGameState()) startNewGame();
     }
+    if (state==='levelcomplete' && summaryCounters && summaryCounters.done) startLevel();
   }
   function release(e) {
     e.preventDefault();
