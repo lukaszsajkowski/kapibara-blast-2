@@ -304,6 +304,239 @@ test.describe('Przechodzenie między poziomami', () => {
 });
 
 // ════════════════════════════════════════════════════════════════
+//  EKRAN PODSUMOWANIA — nie może się blokować
+// ════════════════════════════════════════════════════════════════
+
+test.describe('Ekran podsumowania poziomu', () => {
+  test('klawisz podczas animacji liczników pomija animację', async ({ page }) => {
+    await startGame(page);
+    await killAllRobots(page);
+    await waitForState(page, 'levelcomplete');
+    // Counters should NOT be done yet (animation just started)
+    const doneBefore = await g(page, () => summaryCounters && summaryCounters.done);
+    expect(doneBefore).toBe(false);
+    // Press key to skip animation
+    await page.keyboard.press('Space');
+    await page.waitForTimeout(50);
+    const doneAfter = await g(page, () => summaryCounters && summaryCounters.done);
+    expect(doneAfter).toBe(true);
+  });
+
+  test('drugi klawisz po pominięciu animacji przechodzi do następnego poziomu', async ({ page }) => {
+    await startGame(page);
+    const lvlBefore = await g(page, () => level);
+    await killAllRobots(page);
+    await waitForState(page, 'levelcomplete');
+    // First key: skip animation
+    await page.keyboard.press('Space');
+    await page.waitForTimeout(50);
+    // Second key: advance to next level
+    await page.keyboard.press('Space');
+    await page.waitForFunction(() => state !== 'levelcomplete', { timeout: 5000 });
+    const lvlAfter = await g(page, () => level);
+    expect(lvlAfter).toBe(lvlBefore + 1);
+  });
+
+  test('kliknięcie myszą podczas animacji pomija animację', async ({ page }) => {
+    await startGame(page);
+    await killAllRobots(page);
+    await waitForState(page, 'levelcomplete');
+    const doneBefore = await g(page, () => summaryCounters && summaryCounters.done);
+    expect(doneBefore).toBe(false);
+    await page.mouse.click(400, 400);
+    await page.waitForTimeout(50);
+    const doneAfter = await g(page, () => summaryCounters && summaryCounters.done);
+    expect(doneAfter).toBe(true);
+  });
+
+  test('kliknięcie myszą po pominięciu animacji przechodzi dalej', async ({ page }) => {
+    await startGame(page);
+    const lvlBefore = await g(page, () => level);
+    await killAllRobots(page);
+    await waitForState(page, 'levelcomplete');
+    // First click: skip
+    await page.mouse.click(400, 400);
+    await page.waitForTimeout(50);
+    // Second click: advance
+    await page.mouse.click(400, 400);
+    await page.waitForFunction(() => state !== 'levelcomplete', { timeout: 5000 });
+    expect(await g(page, () => level)).toBe(lvlBefore + 1);
+  });
+
+  test('ekran podsumowania pokazuje poprawny numer poziomu (completedLevel)', async ({ page }) => {
+    await startGame(page);
+    await killAllRobots(page);
+    await waitForState(page, 'levelcomplete');
+    const info = await g(page, () => ({
+      completedLevel: summaryCounters.completedLevel,
+      currentLevel: level,
+    }));
+    expect(info.completedLevel).toBe(info.currentLevel);
+    expect(info.completedLevel).toBe(1);
+  });
+
+  test('completedLevel nie zmienia się po wywołaniu startLevel', async ({ page }) => {
+    await startGame(page);
+    await killAllRobots(page);
+    await waitForState(page, 'levelcomplete');
+    const completedLvl = await g(page, () => summaryCounters.completedLevel);
+    // Skip animation and advance
+    await page.evaluate(() => {
+      if (summaryCounters) { summaryCounters.done = true; summaryCounters.phase = 3; }
+    });
+    await page.keyboard.press('Enter');
+    await page.waitForFunction(() => state !== 'levelcomplete', { timeout: 5000 });
+    // Level should have incremented, but the completed level was correct
+    expect(completedLvl).toBe(1);
+    expect(await g(page, () => level)).toBe(2);
+  });
+
+  test('wielokrotne szybkie naciśnięcia klawiszy nie powodują podwójnego skoku poziomu', async ({ page }) => {
+    await startGame(page);
+    await killAllRobots(page);
+    await waitForState(page, 'levelcomplete');
+    await page.evaluate(() => {
+      if (summaryCounters) { summaryCounters.done = true; summaryCounters.phase = 3; }
+    });
+    // Rapid-fire keys
+    await page.keyboard.press('Enter');
+    await page.keyboard.press('Enter');
+    await page.keyboard.press('Enter');
+    await page.keyboard.press('Space');
+    await page.waitForFunction(() => state === 'playing', { timeout: 10000 });
+    expect(await g(page, () => level)).toBe(2);
+  });
+
+  test('wielokrotne szybkie kliknięcia myszą nie powodują podwójnego skoku poziomu', async ({ page }) => {
+    await startGame(page);
+    await killAllRobots(page);
+    await waitForState(page, 'levelcomplete');
+    await page.evaluate(() => {
+      if (summaryCounters) { summaryCounters.done = true; summaryCounters.phase = 3; }
+    });
+    // Rapid clicks
+    await page.mouse.click(400, 400);
+    await page.mouse.click(400, 400);
+    await page.mouse.click(400, 400);
+    await page.waitForFunction(() => state === 'playing', { timeout: 10000 });
+    expect(await g(page, () => level)).toBe(2);
+  });
+
+  test('startLevel z nieprawidłowego stanu (playing) nie zmienia poziomu', async ({ page }) => {
+    await startGame(page);
+    const result = await page.evaluate(() => {
+      const lvlBefore = level;
+      startLevel(); // state is 'playing' — should be blocked
+      return { lvlBefore, lvlAfter: level, state };
+    });
+    expect(result.lvlAfter).toBe(result.lvlBefore);
+    expect(result.state).toBe('playing');
+  });
+
+  test('startLevel z nieprawidłowego stanu (dead) nie zmienia poziomu', async ({ page }) => {
+    await startGame(page);
+    const result = await page.evaluate(() => {
+      const lvlBefore = level;
+      state = 'dead';
+      startLevel();
+      return { lvlBefore, lvlAfter: level };
+    });
+    expect(result.lvlAfter).toBe(result.lvlBefore);
+  });
+
+  test('startLevel z nieprawidłowego stanu (paused) nie zmienia poziomu', async ({ page }) => {
+    await startGame(page);
+    const result = await page.evaluate(() => {
+      const lvlBefore = level;
+      state = 'paused';
+      startLevel();
+      return { lvlBefore, lvlAfter: level };
+    });
+    expect(result.lvlAfter).toBe(result.lvlBefore);
+  });
+
+  test('auto-advance po 8 sekundach działa nawet gdy liczniki nie skończyły', async ({ page }) => {
+    await startGame(page);
+    await killAllRobots(page);
+    await waitForState(page, 'levelcomplete');
+    // Deliberately keep counters not-done, but fast-forward levelTimer past 8s
+    await page.evaluate(() => {
+      if (summaryCounters) summaryCounters.done = false;
+      levelTimer = 8.1;
+    });
+    // Next update frame should auto-advance
+    await page.waitForFunction(() => state !== 'levelcomplete', { timeout: 3000 });
+    expect(await g(page, () => level)).toBe(2);
+  });
+
+  test('podsumowanie z zerowym wynikiem za poziom nie blokuje ekranu', async ({ page }) => {
+    await startGame(page);
+    // Set score to 0 and kill robots directly (no points)
+    await page.evaluate(() => {
+      score = 0;
+      levelScoreStart = 0;
+      robots.forEach(r => { r.alive = false; r.hp = 0; });
+    });
+    await waitForState(page, 'levelcomplete');
+    // Counters should still complete (all targets are 0)
+    await page.waitForFunction(
+      () => summaryCounters && summaryCounters.done,
+      { timeout: 5000 }
+    );
+    // And advancing should work
+    await page.keyboard.press('Enter');
+    await page.waitForFunction(() => state !== 'levelcomplete', { timeout: 5000 });
+    expect(await g(page, () => level)).toBe(2);
+  });
+
+  test('przejście 3 poziomów z rzędu bez blokady', async ({ page }) => {
+    await startGame(page);
+    for (let i = 1; i <= 3; i++) {
+      expect(await g(page, () => level)).toBe(i);
+      await killAllRobots(page);
+      await waitForState(page, 'levelcomplete');
+      // Skip animation + advance
+      await page.keyboard.press('Space');
+      await page.waitForTimeout(50);
+      await page.keyboard.press('Space');
+      await page.waitForFunction(() => state === 'playing', { timeout: 10000 });
+      expect(await g(page, () => level)).toBe(i + 1);
+    }
+  });
+
+  test('HUD pokazuje poprawny poziom po przejściu do następnego', async ({ page }) => {
+    await startGame(page);
+    await killAllRobots(page);
+    await waitForState(page, 'levelcomplete');
+    await page.evaluate(() => {
+      if (summaryCounters) { summaryCounters.done = true; summaryCounters.phase = 3; }
+    });
+    await page.keyboard.press('Enter');
+    await page.waitForFunction(() => state === 'playing', { timeout: 10000 });
+    const hudLevel = await page.evaluate(() => document.getElementById('levelEl').textContent);
+    expect(hudLevel).toBe('2');
+    expect(await g(page, () => level)).toBe(2);
+  });
+
+  test('wynik jest zachowany między poziomami', async ({ page }) => {
+    await startGame(page);
+    await page.evaluate(() => { score = 5000; });
+    await killAllRobots(page);
+    await waitForState(page, 'levelcomplete');
+    const scoreAfterComplete = await g(page, () => score);
+    expect(scoreAfterComplete).toBeGreaterThanOrEqual(5000);
+    // Advance
+    await page.evaluate(() => {
+      if (summaryCounters) { summaryCounters.done = true; summaryCounters.phase = 3; }
+    });
+    await page.keyboard.press('Enter');
+    await page.waitForFunction(() => state === 'playing', { timeout: 10000 });
+    const scoreAfterAdvance = await g(page, () => score);
+    expect(scoreAfterAdvance).toBe(scoreAfterComplete);
+  });
+});
+
+// ════════════════════════════════════════════════════════════════
 //  ROBOTS
 // ════════════════════════════════════════════════════════════════
 

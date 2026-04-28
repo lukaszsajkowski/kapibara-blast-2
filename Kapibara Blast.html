@@ -839,6 +839,7 @@ function reset() {
   detonatorBomb=null; teleportCooldown=0; spikesTimer=0; playerSlide=null;
   highScoreSaved=false; showingHighScores=false;
   ensureAudio();
+  state='_reset';
   startLevel();
 }
 
@@ -915,7 +916,8 @@ function spawnPositions(count) {
 }
 
 function startLevel() {
-  if (state==='levelintro') return; // guard against double-call
+  if (state!=='levelcomplete' && state!=='menu' && state!=='_reset') return; // only advance from valid states
+  state = '_advancing'; // prevent re-entry
   level++;
   map = mkMap();
   placeMapElements();
@@ -1213,6 +1215,7 @@ function update(dt) {
       // Init summary counters for animated count-up
       const levelScore = score - levelScoreStart - levelTimeBonus;
       summaryCounters = {
+        completedLevel: level,
         scoreTarget: levelScore, scoreCurrent: 0,
         timeBonusTarget: levelTimeBonus, timeBonusCurrent: 0,
         comboMax: levelComboMax,
@@ -2828,7 +2831,7 @@ function drawLevelComplete() {
   ctx.textAlign='center';
   ctx.fillStyle='#44ff88';
   ctx.font=`900 38px 'Courier New'`;
-  ctx.fillText(`POZIOM ${level} UKONCZONY!`, W/2, H/2 - 100);
+  ctx.fillText(`POZIOM ${summaryCounters ? summaryCounters.completedLevel : level} UKONCZONY!`, W/2, H/2 - 100);
 
   if (summaryCounters) {
     const sc = summaryCounters;
@@ -2960,6 +2963,14 @@ window.addEventListener('keydown', e=>{
   }
   if (state==='levelcomplete') {
     if (summaryCounters && summaryCounters.done) startLevel();
+    else if (summaryCounters && !summaryCounters.done) {
+      // Skip counter animation on any key press
+      summaryCounters.scoreCurrent = summaryCounters.scoreTarget;
+      summaryCounters.timeBonusCurrent = summaryCounters.timeBonusTarget;
+      summaryCounters.totalCurrent = summaryCounters.totalTarget;
+      summaryCounters.phase = 3;
+      summaryCounters.done = true;
+    }
     return;
   }
   if (state==='playing') {
@@ -3006,7 +3017,10 @@ document.querySelectorAll('#dpad .touch-btn').forEach(btn => {
     if (state==='menu' && !showingHighScores) {
       if (!loadGameState()) startNewGame();
     }
-    if (state==='levelcomplete' && summaryCounters && summaryCounters.done) startLevel();
+    if (state==='levelcomplete' && summaryCounters) {
+      if (summaryCounters.done) startLevel();
+      else { summaryCounters.scoreCurrent=summaryCounters.scoreTarget; summaryCounters.timeBonusCurrent=summaryCounters.timeBonusTarget; summaryCounters.totalCurrent=summaryCounters.totalTarget; summaryCounters.phase=3; summaryCounters.done=true; }
+    }
   }
   function release(e) {
     e.preventDefault();
@@ -3031,7 +3045,10 @@ document.querySelectorAll('#touch-actions .touch-btn').forEach(btn => {
         if (!loadGameState()) startNewGame();
       }
       if (state==='gameover') { if(pendingScore)confirmNameInput(); $nameOverlay.classList.remove('active'); highScoreSaved=false; state='menu'; }
-      if (state==='levelcomplete' && summaryCounters && summaryCounters.done) startLevel();
+      if (state==='levelcomplete' && summaryCounters) {
+        if (summaryCounters.done) startLevel();
+        else { summaryCounters.scoreCurrent=summaryCounters.scoreTarget; summaryCounters.timeBonusCurrent=summaryCounters.timeBonusTarget; summaryCounters.totalCurrent=summaryCounters.totalTarget; summaryCounters.phase=3; summaryCounters.done=true; }
+      }
     } else if (action === 'pause') {
       if (state==='playing') { state='paused'; saveGameState(); }
       else if (state==='paused') { state='playing'; saveGameState(); }
@@ -3056,7 +3073,16 @@ canvas.addEventListener('touchmove', e => e.preventDefault(), {passive:false});
 // Prevent mouse clicks from disrupting gameplay; also advance on click for levelcomplete
 document.addEventListener('mousedown', e => {
   if (state === 'playing' || state === 'paused' || state === 'levelintro' || state === 'levelcomplete') e.preventDefault();
-  if (state === 'levelcomplete' && summaryCounters && summaryCounters.done) startLevel();
+  if (state === 'levelcomplete' && summaryCounters) {
+    if (summaryCounters.done) startLevel();
+    else {
+      summaryCounters.scoreCurrent = summaryCounters.scoreTarget;
+      summaryCounters.timeBonusCurrent = summaryCounters.timeBonusTarget;
+      summaryCounters.totalCurrent = summaryCounters.totalTarget;
+      summaryCounters.phase = 3;
+      summaryCounters.done = true;
+    }
+  }
 });
 document.addEventListener('contextmenu', e => { if (state !== 'menu') e.preventDefault(); });
 
