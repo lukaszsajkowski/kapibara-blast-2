@@ -2885,7 +2885,7 @@ function drawLevelComplete() {
       ctx.textAlign='center';
       ctx.fillStyle='#556';
       ctx.font=`14px 'Courier New'`;
-      ctx.fillText('NACISNIJ DOWOLNY KLAWISZ...', W/2, baseY + lineH * 4.6);
+      ctx.fillText('KLIKNIJ LUB NACISNIJ DOWOLNY KLAWISZ...', W/2, baseY + lineH * 4.6);
     }
   }
 }
@@ -3053,8 +3053,11 @@ document.querySelectorAll('#touch-actions .touch-btn').forEach(btn => {
 canvas.addEventListener('touchstart', e => e.preventDefault(), {passive:false});
 canvas.addEventListener('touchmove', e => e.preventDefault(), {passive:false});
 
-// Prevent mouse clicks from disrupting gameplay
-document.addEventListener('mousedown', e => { if (state === 'playing' || state === 'paused' || state === 'levelintro' || state === 'levelcomplete') e.preventDefault(); });
+// Prevent mouse clicks from disrupting gameplay; also advance on click for levelcomplete
+document.addEventListener('mousedown', e => {
+  if (state === 'playing' || state === 'paused' || state === 'levelintro' || state === 'levelcomplete') e.preventDefault();
+  if (state === 'levelcomplete' && summaryCounters && summaryCounters.done) startLevel();
+});
 document.addEventListener('contextmenu', e => { if (state !== 'menu') e.preventDefault(); });
 
 requestAnimationFrame(loop);
