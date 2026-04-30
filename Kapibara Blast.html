@@ -905,10 +905,23 @@ function spawnPositions(count) {
       used.add(`${pref[0]},${pref[1]}`);
     } else {
       // Find a random free tile not yet used
+      let found = false;
       for (let tries=0; tries<100; tries++) {
+        if (free.length === 0) break;
         const candidate = free[Math.floor(Math.random()*free.length)];
         const key = `${candidate[0]},${candidate[1]}`;
-        if (!used.has(key)) { result.push(candidate); used.add(key); break; }
+        if (!used.has(key)) { result.push(candidate); used.add(key); found = true; break; }
+      }
+      // Fallback: scan all free tiles for any unused one
+      if (!found) {
+        for (const tile of free) {
+          const key = `${tile[0]},${tile[1]}`;
+          if (!used.has(key)) { result.push(tile); used.add(key); found = true; break; }
+        }
+      }
+      // Last resort: place at a safe default position
+      if (!found) {
+        result.push([Math.floor(COLS/2), Math.floor(ROWS/2)]);
       }
     }
   }
@@ -930,11 +943,13 @@ function startLevel() {
 
   const types = robotsForLevel(level);
   const positions = spawnPositions(types.length);
-  robots = types.map((type, i) => {
-    const [tx, ty] = positions[i];
-    const r = mkRobot(tx, ty, type);
-    return r;
-  });
+  robots = [];
+  for (let i = 0; i < types.length; i++) {
+    const pos = positions[i];
+    if (!pos) continue; // skip if no valid position
+    const r = mkRobot(pos[0], pos[1], types[i]);
+    robots.push(r);
+  }
 
   levelTime = 0;
   levelScoreStart = score;
@@ -1335,7 +1350,7 @@ function updatePlayer(dt) {
 function updateRobots(dt) {
   const toAdd = []; // for splitter spawns
   robots.forEach(r=>{
-    if (!r.alive) return;
+    if (!r.alive || isNaN(r.x) || isNaN(r.y)) { r.alive = false; return; }
     r.hitFlash = Math.max(0, (r.hitFlash||0)-dt);
     r.invince = Math.max(0, (r.invince||0)-dt);
 
@@ -2608,13 +2623,13 @@ function draw(t) {
 
   // Dynamic shadows under entities
   robots.forEach(r => {
-    if (r.alive) drawDynamicShadow(r.x + TILE/2, r.y + TILE/2, TILE * 0.35);
+    if (r.alive && !isNaN(r.x)) drawDynamicShadow(r.x + TILE/2, r.y + TILE/2, TILE * 0.35);
   });
   if (player.alive) drawDynamicShadow(player.x + TILE/2, player.y + TILE/2, TILE * 0.38);
 
   // Robots
   robots.forEach(r=>{
-    if (!r.alive) return;
+    if (!r.alive || isNaN(r.x) || isNaN(r.y)) return;
     if (r.isMini) {
       ctx.save();
       const cx = r.x+TILE/2, cy = r.y+TILE/2;

@@ -1071,3 +1071,64 @@ test.describe('Skalowanie trudności', () => {
     }
   });
 });
+
+// ════════════════════════════════════════════════════════════════
+//  SPAWN POSITIONS — all robots must have valid coordinates
+// ════════════════════════════════════════════════════════════════
+
+test.describe('Spawnowanie robotów', () => {
+  test('wszystkie roboty mają prawidłowe (nie-NaN) pozycje na każdym poziomie 1-15', async ({ page }) => {
+    await startGame(page);
+    for (let lvl = 1; lvl <= 15; lvl++) {
+      const result = await page.evaluate((l) => {
+        level = l - 1;
+        state = 'levelcomplete';
+        startLevel();
+        const bad = robots.filter(r => isNaN(r.x) || isNaN(r.y) || r.x < 0 || r.y < 0);
+        return { total: robots.length, bad: bad.length, level };
+      }, lvl);
+      expect(result.bad).toBe(0);
+      expect(result.total).toBeGreaterThan(0);
+    }
+  });
+
+  test('spawnPositions zawsze zwraca dokładnie tyle pozycji ile żądano', async ({ page }) => {
+    await startGame(page);
+    for (const count of [1, 3, 5, 8, 12, 15]) {
+      const result = await page.evaluate((c) => {
+        map = mkMap();
+        const positions = spawnPositions(c);
+        const valid = positions.filter(p => p && !isNaN(p[0]) && !isNaN(p[1]));
+        return { requested: c, got: positions.length, valid: valid.length };
+      }, count);
+      expect(result.got).toBe(count);
+      expect(result.valid).toBe(count);
+    }
+  });
+
+  test('przejście 10 poziomów z prawdziwym spawnowaniem — roboty zawsze poprawne', async ({ page }) => {
+    await startGame(page);
+    for (let i = 1; i <= 10; i++) {
+      // Verify all robots have valid positions
+      const info = await page.evaluate(() => ({
+        level,
+        robotCount: robots.length,
+        allAlive: robots.filter(r => r.alive).length,
+        anyNaN: robots.some(r => isNaN(r.x) || isNaN(r.y)),
+        state,
+      }));
+      expect(info.robotCount).toBeGreaterThan(0);
+      expect(info.anyNaN).toBe(false);
+      expect(info.allAlive).toBe(info.robotCount);
+
+      // Kill all and advance
+      await killAllRobots(page);
+      await waitForState(page, 'levelcomplete');
+      await page.evaluate(() => {
+        if (summaryCounters) { summaryCounters.done = true; summaryCounters.phase = 3; }
+      });
+      await page.keyboard.press('Enter');
+      await page.waitForFunction(() => state === 'playing', { timeout: 10000 });
+    }
+  });
+});
