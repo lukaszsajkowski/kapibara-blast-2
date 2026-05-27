@@ -1987,6 +1987,9 @@ function hud() {
   if (playerDetonator) bombTxt += ' 🔴';
   if (playerMega) bombTxt += ' 💀';
   $bomb.textContent = bombTxt;
+  if (freezeTimer > 0) {
+    $bomb.textContent = bombTxt + ` ❄${Math.ceil(freezeTimer)}s`;
+  }
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -2546,7 +2549,7 @@ function updatePowerups(dt) {
 function isMaxedOut(type) {
   if (type===PU_RANGE)  return EXPL_RANGE >= 5;
   if (type===PU_SPEED)  return PLAYER_SPEED >= 6.5*TILE;
-  if (type===PU_LIFE)   return lives >= 5;
+  if (type===PU_LIFE)   return lives >= maxLives;
   if (type===PU_BOMBS)  return MAX_BOMBS >= 4;
   if (type===PU_SHIELD) return playerShield === true;
   if (type===PU_DETONATOR) return playerDetonator === true;
@@ -2557,7 +2560,7 @@ function isMaxedOut(type) {
 function applyPowerup(type) {
   if (type===PU_RANGE)  { EXPL_RANGE = Math.min(EXPL_RANGE+1, 5); score+=50; }
   if (type===PU_SPEED)  { PLAYER_SPEED = Math.min(PLAYER_SPEED+0.6*TILE, 6.5*TILE); score+=50; }
-  if (type===PU_LIFE)   { lives = Math.min(lives+1, 5); score+=50; hud(); }
+  if (type===PU_LIFE)   { lives = Math.min(lives+1, maxLives); score+=50; hud(); }
   if (type===PU_BOMBS)  { MAX_BOMBS = Math.min(MAX_BOMBS+1, 4); score+=50; }
   if (type===PU_SHIELD) { playerShield = true; score+=50; spawnFloatingText(player.x+TILE/2, player.y, 'TARCZA!', '#44ddff'); }
   if (type===PU_GHOST)  { playerGhost = 8; score+=50; spawnFloatingText(player.x+TILE/2, player.y, 'DUCH 8s!', '#bb88ff'); }
@@ -3672,17 +3675,25 @@ function draw(t) {
   // Robots
   robots.forEach(r=>{
     if (!r.alive || isNaN(r.x) || isNaN(r.y)) return;
+    ctx.save();
     if (r.isMini) {
-      ctx.save();
       const cx = r.x+TILE/2, cy = r.y+TILE/2;
       ctx.translate(cx, cy);
       ctx.scale(0.6, 0.6);
       ctx.translate(-cx, -cy);
       drawRobot(cx, cy, r.facing, r.frame, t, r.type, r.hitFlash, r.hp);
-      ctx.restore();
     } else {
       drawRobot(r.x+TILE/2, r.y+TILE/2, r.facing, r.frame, t, r.type, r.hitFlash, r.hp);
     }
+    // Freeze overlay
+    if (freezeTimer > 0) {
+      const rx = r.isMini ? r.x + TILE * 0.2 : r.x;
+      const ry = r.isMini ? r.y + TILE * 0.2 : r.y;
+      const rs = r.isMini ? TILE * 0.6 : TILE;
+      ctx.fillStyle = 'rgba(100,180,255,0.3)';
+      ctx.fillRect(rx + 2, ry + 2, rs - 4, rs - 4);
+    }
+    ctx.restore();
   });
 
   // Robot debris (death animation)
@@ -4119,12 +4130,92 @@ function applyQuizReward() {
   saveGameState();
 }
 
-// Audio stubs — implemented in Task 7
-function sfxMysteryBox() {}
-function sfxQuizCorrect() {}
-function sfxQuizWrong() {}
-function sfxQuizReward() {}
-function sfxFreeze() {}
+function sfxMysteryBox() {
+  if (muted || !audioCtx) return;
+  const t = audioCtx.currentTime;
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  osc.type = 'sine';
+  osc.frequency.setValueAtTime(400, t);
+  osc.frequency.exponentialRampToValueAtTime(800, t + 0.15);
+  osc.frequency.exponentialRampToValueAtTime(1200, t + 0.3);
+  gain.gain.setValueAtTime(0.15, t);
+  gain.gain.exponentialRampToValueAtTime(0.01, t + 0.4);
+  osc.connect(gain); gain.connect(sfxGain);
+  osc.start(t); osc.stop(t + 0.4);
+}
+
+function sfxQuizCorrect() {
+  if (muted || !audioCtx) return;
+  const t = audioCtx.currentTime;
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  osc.type = 'sine';
+  osc.frequency.setValueAtTime(800, t);
+  osc.frequency.setValueAtTime(1000, t + 0.05);
+  gain.gain.setValueAtTime(0.12, t);
+  gain.gain.exponentialRampToValueAtTime(0.01, t + 0.15);
+  osc.connect(gain); gain.connect(sfxGain);
+  osc.start(t); osc.stop(t + 0.15);
+}
+
+function sfxQuizWrong() {
+  if (muted || !audioCtx) return;
+  const t = audioCtx.currentTime;
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  osc.type = 'square';
+  osc.frequency.setValueAtTime(200, t);
+  osc.frequency.setValueAtTime(150, t + 0.08);
+  gain.gain.setValueAtTime(0.1, t);
+  gain.gain.exponentialRampToValueAtTime(0.01, t + 0.2);
+  osc.connect(gain); gain.connect(sfxGain);
+  osc.start(t); osc.stop(t + 0.2);
+}
+
+function sfxQuizReward() {
+  if (muted || !audioCtx) return;
+  const t = audioCtx.currentTime;
+  [523, 659, 784, 1047].forEach((freq, i) => {
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(freq, t + i * 0.1);
+    gain.gain.setValueAtTime(0, t + i * 0.1);
+    gain.gain.linearRampToValueAtTime(0.12, t + i * 0.1 + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.01, t + i * 0.1 + 0.3);
+    osc.connect(gain); gain.connect(sfxGain);
+    osc.start(t + i * 0.1); osc.stop(t + i * 0.1 + 0.3);
+  });
+}
+
+function sfxFreeze() {
+  if (muted || !audioCtx) return;
+  const t = audioCtx.currentTime;
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  osc.type = 'sine';
+  osc.frequency.setValueAtTime(2000, t);
+  osc.frequency.exponentialRampToValueAtTime(4000, t + 0.3);
+  osc.frequency.exponentialRampToValueAtTime(1500, t + 0.6);
+  gain.gain.setValueAtTime(0.08, t);
+  gain.gain.exponentialRampToValueAtTime(0.01, t + 0.6);
+  osc.connect(gain); gain.connect(sfxGain);
+  osc.start(t); osc.stop(t + 0.6);
+  const bufferSize = audioCtx.sampleRate * 0.5;
+  const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+  const data = buffer.getChannelData(0);
+  for (let i = 0; i < bufferSize; i++) data[i] = (Math.random() * 2 - 1) * 0.3;
+  const noise = audioCtx.createBufferSource();
+  noise.buffer = buffer;
+  const nGain = audioCtx.createGain();
+  nGain.gain.setValueAtTime(0.04, t);
+  nGain.gain.exponentialRampToValueAtTime(0.001, t + 0.5);
+  const hp = audioCtx.createBiquadFilter();
+  hp.type = 'highpass'; hp.frequency.value = 3000;
+  noise.connect(hp); hp.connect(nGain); nGain.connect(sfxGain);
+  noise.start(t); noise.stop(t + 0.5);
+}
 
 function drawQuizOverlay(t) {
   ctx.fillStyle = 'rgba(5,5,15,0.88)';
