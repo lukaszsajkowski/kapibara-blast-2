@@ -1730,6 +1730,91 @@ const QUIZ_WORDS = [
   }},
 ];
 
+// ════════════════════════════════════════════════════════════════
+//  CAPYBARA SKINS
+// ════════════════════════════════════════════════════════════════
+function drawSkinAccessories(ctx, cx, cy, facing, frame, t) {
+  const skinObj = SKINS.find(s => s.id === activeSkin);
+  if (!skinObj || activeSkin === 'default') return;
+
+  const S = TILE * 0.86;
+  const bob = frame === 1 ? 2 : 0;
+
+  switch (activeSkin) {
+    case 'explorer': {
+      ctx.fillStyle = '#c8a050';
+      ctx.beginPath(); ctx.ellipse(0, -S * 0.38 + bob, S * 0.32, S * 0.06, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#b89040';
+      ctx.beginPath();
+      ctx.moveTo(-S * 0.18, -S * 0.38 + bob); ctx.lineTo(-S * 0.12, -S * 0.52 + bob);
+      ctx.lineTo(S * 0.12, -S * 0.52 + bob); ctx.lineTo(S * 0.18, -S * 0.38 + bob);
+      ctx.closePath(); ctx.fill();
+      ctx.fillStyle = '#885533';
+      ctx.fillRect(-S * 0.18, -S * 0.4 + bob, S * 0.36, S * 0.03);
+      break;
+    }
+    case 'knight': {
+      ctx.fillStyle = '#aabbcc';
+      ctx.beginPath(); ctx.arc(0, -S * 0.3 + bob, S * 0.2, Math.PI, 0); ctx.fill();
+      ctx.fillRect(-S * 0.2, -S * 0.3 + bob, S * 0.4, S * 0.08);
+      ctx.fillStyle = '#334';
+      ctx.fillRect(-S * 0.12, -S * 0.26 + bob, S * 0.24, S * 0.025);
+      ctx.fillStyle = '#dd3333';
+      ctx.beginPath(); ctx.ellipse(0, -S * 0.48 + bob, S * 0.04, S * 0.12, 0, 0, Math.PI * 2); ctx.fill();
+      break;
+    }
+    case 'pirate': {
+      ctx.fillStyle = '#222';
+      ctx.beginPath(); ctx.arc(0, -S * 0.32 + bob, S * 0.2, Math.PI, 0); ctx.fill();
+      ctx.fillStyle = '#fff';
+      ctx.beginPath(); ctx.arc(0, -S * 0.38 + bob, S * 0.06, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#111';
+      ctx.beginPath(); ctx.arc(facing * S * 0.08, -S * 0.2 + bob, S * 0.045, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = '#111'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(facing * S * 0.08, -S * 0.2 + bob); ctx.lineTo(facing * S * 0.18, -S * 0.32 + bob); ctx.stroke();
+      break;
+    }
+    case 'astronaut': {
+      ctx.save();
+      ctx.strokeStyle = 'rgba(200,220,255,0.6)';
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(0, -S * 0.22 + bob, S * 0.24, 0, Math.PI * 2); ctx.stroke();
+      ctx.globalAlpha = 0.15;
+      ctx.fillStyle = '#88ccff';
+      ctx.beginPath(); ctx.arc(-S * 0.05, -S * 0.26 + bob, S * 0.12, 0, Math.PI * 2); ctx.fill();
+      ctx.restore();
+      ctx.strokeStyle = '#888'; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(0, -S * 0.44 + bob); ctx.lineTo(S * 0.05, -S * 0.55 + bob); ctx.stroke();
+      ctx.fillStyle = '#ff4444';
+      ctx.beginPath(); ctx.arc(S * 0.05, -S * 0.55 + bob, S * 0.03, 0, Math.PI * 2); ctx.fill();
+      break;
+    }
+    case 'wizard': {
+      ctx.fillStyle = '#7733bb';
+      ctx.beginPath();
+      ctx.moveTo(-S * 0.2, -S * 0.32 + bob); ctx.lineTo(0, -S * 0.65 + bob); ctx.lineTo(S * 0.2, -S * 0.32 + bob);
+      ctx.closePath(); ctx.fill();
+      ctx.fillStyle = '#ffdd44';
+      ctx.beginPath(); ctx.arc(-S * 0.05, -S * 0.42 + bob, S * 0.025, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(S * 0.08, -S * 0.38 + bob, S * 0.02, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#6622aa';
+      ctx.beginPath(); ctx.ellipse(0, -S * 0.32 + bob, S * 0.24, S * 0.04, 0, 0, Math.PI * 2); ctx.fill();
+      break;
+    }
+    case 'ninja': {
+      ctx.fillStyle = '#222';
+      ctx.fillRect(-S * 0.16, -S * 0.26 + bob, S * 0.32, S * 0.1);
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(-S * 0.12, -S * 0.24 + bob, S * 0.24, S * 0.03);
+      ctx.strokeStyle = '#dd2222'; ctx.lineWidth = 2; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(-facing * S * 0.16, -S * 0.22 + bob);
+      ctx.quadraticCurveTo(-facing * S * 0.3, -S * 0.18 + bob, -facing * S * 0.35, -S * 0.28 + bob);
+      ctx.stroke();
+      break;
+    }
+  }
+}
+
 function mkMap() {
   const m = [];
   for (let y=0; y<ROWS; y++) {
@@ -3459,6 +3544,9 @@ function drawCapybara(cx,cy,facing,frame,alpha=1,t=0) {
   ctx.fillStyle='#cc9900';
   ctx.fillRect(-S*0.12,-S*0.24+bob, S*0.24, 2);
 
+  // Skin accessories
+  drawSkinAccessories(ctx, 0, 0, facing, frame, t);
+
   ctx.restore();
 }
 
@@ -3811,6 +3899,11 @@ function drawMenuScreen(t) {
   }
   ctx.globalAlpha = 1;
 
+  if (skinMenuOpen) {
+    drawSkinMenu(t);
+    return;
+  }
+
   if (showingHighScores) {
     // High scores screen
     ctx.textAlign='center';
@@ -3864,7 +3957,7 @@ function drawMenuScreen(t) {
 
   ctx.fillStyle='#667';
   ctx.font=`15px 'Courier New'`;
-  ctx.fillText(saveExists ? 'N — NOWA GRA    H — NAJLEPSZE WYNIKI' : 'H — NAJLEPSZE WYNIKI', W/2, H/2 + 130);
+  ctx.fillText(saveExists ? 'N — NOWA GRA    H — WYNIKI    S — SKINY' : 'H — WYNIKI    S — SKINY', W/2, H/2 + 130);
 
   // Controls hint
   ctx.fillStyle='#445';
@@ -3974,6 +4067,71 @@ function drawPauseScreen() {
   ctx.fillStyle='#889';
   ctx.font=`16px 'Courier New'`;
   ctx.fillText('ESC — KONTYNUUJ    R — RESTART    M — MUTE', W/2, H/2 + 30);
+}
+
+function drawSkinMenu(t) {
+  ctx.fillStyle = '#0a0a16';
+  ctx.fillRect(0, 0, W, H);
+
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#ffe14d';
+  ctx.font = "900 32px 'Courier New'";
+  ctx.fillText('SKINY', W / 2, 55);
+
+  const cols = 4, cellW = 150, cellH = 130;
+  const startX = W / 2 - (cols * cellW) / 2;
+  const startY = 85;
+
+  SKINS.forEach((skin, i) => {
+    const col = i % cols, row = Math.floor(i / cols);
+    const sx = startX + col * cellW + cellW / 2;
+    const sy = startY + row * cellH + 50;
+    const isUnlocked = unlockedSkins.includes(skin.id);
+    const isActive = activeSkin === skin.id;
+
+    ctx.fillStyle = isActive ? 'rgba(255,225,77,0.1)' : 'rgba(255,255,255,0.03)';
+    rr(sx - cellW / 2 + 8, sy - 45, cellW - 16, cellH - 10, 6);
+    ctx.fill();
+
+    if (isActive) {
+      ctx.strokeStyle = '#ffe14d'; ctx.lineWidth = 2;
+      rr(sx - cellW / 2 + 8, sy - 45, cellW - 16, cellH - 10, 6);
+      ctx.stroke();
+    }
+
+    if (isUnlocked) {
+      ctx.save();
+      const prevSkin = activeSkin;
+      activeSkin = skin.id;
+      drawCapybara(sx, sy, 1, Math.floor(t * 2) % 2, 1, t);
+      activeSkin = prevSkin;
+      ctx.restore();
+
+      ctx.fillStyle = isActive ? '#ffe14d' : '#aab';
+      ctx.font = "bold 11px 'Courier New'";
+      ctx.fillText(skin.name.toUpperCase(), sx, sy + 42);
+    } else {
+      ctx.save();
+      ctx.globalAlpha = 0.3;
+      const prevSkin = activeSkin;
+      activeSkin = 'default';
+      drawCapybara(sx, sy, 1, 0, 0.3, t);
+      activeSkin = prevSkin;
+      ctx.restore();
+
+      ctx.fillStyle = '#556';
+      ctx.font = "22px 'Courier New'";
+      ctx.fillText('🔒', sx, sy + 5);
+
+      ctx.fillStyle = '#445';
+      ctx.font = "bold 11px 'Courier New'";
+      ctx.fillText(skin.name.toUpperCase(), sx, sy + 42);
+    }
+  });
+
+  ctx.fillStyle = '#556';
+  ctx.font = "14px 'Courier New'";
+  ctx.fillText('ESC — WROC    KLIKNIJ SKIN ABY WYBRAC', W / 2, H - 40);
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -4413,6 +4571,8 @@ window.addEventListener('keydown', e=>{
     }
     if (e.key==='n'||e.key==='N') { ensureAudio(); startNewGame(); }
     if (e.key==='h'||e.key==='H') showingHighScores = true;
+    if (e.key==='s'||e.key==='S') skinMenuOpen = true;
+    if (skinMenuOpen && (e.key==='Escape'||e.key==='Backspace')) { skinMenuOpen = false; return; }
     return;
   }
   if (state==='paused') {
@@ -4550,6 +4710,31 @@ canvas.addEventListener('touchmove', e => e.preventDefault(), {passive:false});
 
 // Prevent mouse clicks from disrupting gameplay; also advance on click for levelcomplete
 document.addEventListener('mousedown', e => {
+  if (state === 'menu' && skinMenuOpen) {
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = W / rect.width;
+    const scaleY = H / rect.height;
+    const canvasX = (e.clientX - rect.left) * scaleX;
+    const canvasY = (e.clientY - rect.top) * scaleY;
+
+    const cols = 4, cellW = 150, cellH = 130;
+    const startX = W / 2 - (cols * cellW) / 2;
+    const startY = 85;
+
+    SKINS.forEach((skin, i) => {
+      const col = i % cols, row = Math.floor(i / cols);
+      const sx = startX + col * cellW + cellW / 2;
+      const sy = startY + row * cellH + 50;
+      const bx = sx - cellW / 2 + 8, by = sy - 45;
+      if (canvasX >= bx && canvasX <= bx + cellW - 16 && canvasY >= by && canvasY <= by + cellH - 10) {
+        if (unlockedSkins.includes(skin.id)) {
+          activeSkin = skin.id;
+          saveSkins();
+        }
+      }
+    });
+    return;
+  }
   if (state === 'quiz') {
     const rect = canvas.getBoundingClientRect();
     const scaleX = W / rect.width;
