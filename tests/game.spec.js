@@ -1,7 +1,7 @@
 const { test, expect } = require('@playwright/test');
 const path = require('path');
 
-const GAME_URL = `file://${path.resolve(__dirname, '..', 'Kapibara Blast.html')}`;
+const GAME_URL = `file://${path.resolve(__dirname, '..', 'index.html')}`;
 
 // Helper: evaluate game expression in browser context
 function g(page, expr) {
@@ -1130,5 +1130,620 @@ test.describe('Spawnowanie robotów', () => {
       await page.keyboard.press('Enter');
       await page.waitForFunction(() => state === 'playing', { timeout: 10000 });
     }
+  });
+});
+
+// ════════════════════════════════════════════════════════════════
+//  MYSTERY BOX — spawn & rendering
+// ════════════════════════════════════════════════════════════════
+
+test.describe('Mystery Box — spawn', () => {
+  test('mystery box pojawia się na mapie', async ({ page }) => {
+    await startGame(page);
+    const hasMB = await page.evaluate(() => {
+      for (let y = 0; y < ROWS; y++)
+        for (let x = 0; x < COLS; x++)
+          if (map[y][x] === MYSTERY_BOX) return true;
+      return false;
+    });
+    expect(hasMB).toBe(true);
+  });
+
+  test('mystery box jest w lewym górnym kwadrancie (kolumny 1-6, wiersze 1-5)', async ({ page }) => {
+    await startGame(page);
+    const pos = await page.evaluate(() => {
+      for (let y = 0; y < ROWS; y++)
+        for (let x = 0; x < COLS; x++)
+          if (map[y][x] === MYSTERY_BOX) return { x, y };
+      return null;
+    });
+    expect(pos).not.toBeNull();
+    expect(pos.x).toBeGreaterThanOrEqual(1);
+    expect(pos.x).toBeLessThanOrEqual(6);
+    expect(pos.y).toBeGreaterThanOrEqual(1);
+    expect(pos.y).toBeLessThanOrEqual(5);
+  });
+
+  test('mystery box nie jest na pozycji startowej gracza (1,1)', async ({ page }) => {
+    await startGame(page);
+    const mbAt11 = await page.evaluate(() => map[1][1] === MYSTERY_BOX);
+    expect(mbAt11).toBe(false);
+  });
+
+  test('jest dokładnie jeden mystery box na mapie', async ({ page }) => {
+    await startGame(page);
+    const count = await page.evaluate(() => {
+      let c = 0;
+      for (let y = 0; y < ROWS; y++)
+        for (let x = 0; x < COLS; x++)
+          if (map[y][x] === MYSTERY_BOX) c++;
+      return c;
+    });
+    expect(count).toBe(1);
+  });
+
+  test('mystery box pojawia się na każdym poziomie (1-5)', async ({ page }) => {
+    await startGame(page);
+    for (let i = 1; i <= 5; i++) {
+      const hasMB = await page.evaluate(() => {
+        for (let y = 0; y < ROWS; y++)
+          for (let x = 0; x < COLS; x++)
+            if (map[y][x] === MYSTERY_BOX) return true;
+        return false;
+      });
+      expect(hasMB).toBe(true);
+
+      if (i < 5) {
+        await killAllRobots(page);
+        await waitForState(page, 'levelcomplete');
+        await page.evaluate(() => {
+          if (summaryCounters) { summaryCounters.done = true; summaryCounters.phase = 3; }
+        });
+        await page.keyboard.press('Enter');
+        await page.waitForFunction(() => state === 'playing', { timeout: 10000 });
+      }
+    }
+  });
+
+  test('mystery box nie jest niszczony przez eksplozję', async ({ page }) => {
+    await startGame(page);
+    const mbPos = await page.evaluate(() => {
+      for (let y = 0; y < ROWS; y++)
+        for (let x = 0; x < COLS; x++)
+          if (map[y][x] === MYSTERY_BOX) return { x, y };
+      return null;
+    });
+    expect(mbPos).not.toBeNull();
+    await page.evaluate((pos) => {
+      player.invince = 999;
+      bombs.push({ tx: pos.x, ty: pos.y, timer: 0.05, sparkT: 0, isMega: false });
+      bombsActive++;
+    }, mbPos);
+    await page.waitForFunction(() => explosions.length > 0, { timeout: 3000 });
+    await page.waitForTimeout(100);
+    const stillMB = await page.evaluate((pos) => map[pos.y][pos.x] === MYSTERY_BOX, mbPos);
+    expect(stillMB).toBe(true);
+  });
+
+  test('mystery box blokuje ruch robotów', async ({ page }) => {
+    await startGame(page);
+    const isSolid = await page.evaluate(() => {
+      for (let y = 0; y < ROWS; y++)
+        for (let x = 0; x < COLS; x++)
+          if (map[y][x] === MYSTERY_BOX) return solidForRobot(x, y);
+      return null;
+    });
+    expect(isSolid).toBe(true);
+  });
+});
+
+// ════════════════════════════════════════════════════════════════
+//  MYSTERY BOX — interakcja i quiz
+// ════════════════════════════════════════════════════════════════
+
+test.describe('Mystery Box — interakcja', () => {
+  test('wejście na mystery box zmienia stan na quiz', async ({ page }) => {
+    await startGame(page);
+    await page.evaluate(() => {
+      for (let y = 0; y < ROWS; y++)
+        for (let x = 0; x < COLS; x++)
+          if (map[y][x] === MYSTERY_BOX) {
+            player.x = x * TILE;
+            player.y = y * TILE;
+            return;
+          }
+    });
+    await page.waitForFunction(() => state === 'quiz', { timeout: 3000 });
+  });
+
+  test('po wejściu na mystery box quizPhase to choice', async ({ page }) => {
+    await startGame(page);
+    await page.evaluate(() => {
+      for (let y = 0; y < ROWS; y++)
+        for (let x = 0; x < COLS; x++)
+          if (map[y][x] === MYSTERY_BOX) {
+            player.x = x * TILE;
+            player.y = y * TILE;
+            return;
+          }
+    });
+    await page.waitForFunction(() => state === 'quiz', { timeout: 3000 });
+    expect(await g(page, () => quizPhase)).toBe('choice');
+  });
+
+  test('mystery box znika po interakcji', async ({ page }) => {
+    await startGame(page);
+    const mbPos = await page.evaluate(() => {
+      for (let y = 0; y < ROWS; y++)
+        for (let x = 0; x < COLS; x++)
+          if (map[y][x] === MYSTERY_BOX) return { x, y };
+      return null;
+    });
+    await page.evaluate((pos) => {
+      player.x = pos.x * TILE;
+      player.y = pos.y * TILE;
+    }, mbPos);
+    await page.waitForFunction(() => state === 'quiz', { timeout: 3000 });
+    const tile = await page.evaluate((pos) => map[pos.y][pos.x], mbPos);
+    expect(tile).toBe(0); // FLOOR
+  });
+
+  test('mysteryBoxUsed jest true po interakcji', async ({ page }) => {
+    await startGame(page);
+    await page.evaluate(() => {
+      for (let y = 0; y < ROWS; y++)
+        for (let x = 0; x < COLS; x++)
+          if (map[y][x] === MYSTERY_BOX) {
+            player.x = x * TILE;
+            player.y = y * TILE;
+            return;
+          }
+    });
+    await page.waitForFunction(() => state === 'quiz', { timeout: 3000 });
+    expect(await g(page, () => mysteryBoxUsed)).toBe(true);
+  });
+
+  test('ESC anuluje quiz i daje normalną nagrodę', async ({ page }) => {
+    await startGame(page);
+    await page.evaluate(() => {
+      for (let y = 0; y < ROWS; y++)
+        for (let x = 0; x < COLS; x++)
+          if (map[y][x] === MYSTERY_BOX) {
+            player.x = x * TILE;
+            player.y = y * TILE;
+            return;
+          }
+    });
+    await page.waitForFunction(() => state === 'quiz', { timeout: 3000 });
+    const scoreBefore = await g(page, () => score);
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(100);
+    expect(await g(page, () => state)).toBe('playing');
+    const scoreAfter = await g(page, () => score);
+    expect(scoreAfter).toBeGreaterThanOrEqual(scoreBefore);
+  });
+});
+
+// ════════════════════════════════════════════════════════════════
+//  QUIZ — baza słów i mechanika
+// ════════════════════════════════════════════════════════════════
+
+test.describe('Quiz — baza słów', () => {
+  test('QUIZ_WORDS ma co najmniej 70 słów', async ({ page }) => {
+    await startGame(page);
+    const count = await g(page, () => QUIZ_WORDS.length);
+    expect(count).toBeGreaterThanOrEqual(70);
+  });
+
+  test('QUIZ_WORDS pokrywa wszystkie 6 kategorii', async ({ page }) => {
+    await startGame(page);
+    const categories = await page.evaluate(() =>
+      [...new Set(QUIZ_WORDS.map(w => w.category))].sort()
+    );
+    expect(categories).toEqual(['animals', 'body', 'colors', 'food', 'nature', 'objects']);
+  });
+
+  test('każde słowo ma pl, en, category i draw', async ({ page }) => {
+    await startGame(page);
+    const allValid = await page.evaluate(() =>
+      QUIZ_WORDS.every(w => w.pl && w.en && w.category && typeof w.draw === 'function')
+    );
+    expect(allValid).toBe(true);
+  });
+
+  test('nie ma duplikatów en w bazie słów', async ({ page }) => {
+    await startGame(page);
+    const hasDups = await page.evaluate(() => {
+      const enWords = QUIZ_WORDS.map(w => w.en);
+      return enWords.length !== new Set(enWords).size;
+    });
+    expect(hasDups).toBe(false);
+  });
+
+  test('nie ma duplikatów pl w bazie słów', async ({ page }) => {
+    await startGame(page);
+    const hasDups = await page.evaluate(() => {
+      const plWords = QUIZ_WORDS.map(w => w.pl);
+      return plWords.length !== new Set(plWords).size;
+    });
+    expect(hasDups).toBe(false);
+  });
+});
+
+// ════════════════════════════════════════════════════════════════
+//  QUIZ — state machine
+// ════════════════════════════════════════════════════════════════
+
+test.describe('Quiz — maszyna stanów', () => {
+  test('startQuiz ustawia quizPhase na question i losuje 10 słów', async ({ page }) => {
+    await startGame(page);
+    await page.evaluate(() => {
+      state = 'quiz';
+      quizPhase = 'choice';
+      startQuiz();
+    });
+    expect(await g(page, () => quizPhase)).toBe('question');
+    expect(await g(page, () => quizWords.length)).toBe(10);
+    expect(await g(page, () => quizQuestionIndex)).toBe(0);
+    expect(await g(page, () => quizCorrectCount)).toBe(0);
+  });
+
+  test('quizWords nie ma powtórek w jednym quizie', async ({ page }) => {
+    await startGame(page);
+    await page.evaluate(() => { state = 'quiz'; startQuiz(); });
+    const unique = await page.evaluate(() => {
+      const enWords = quizWords.map(w => w.en);
+      return enWords.length === new Set(enWords).size;
+    });
+    expect(unique).toBe(true);
+  });
+
+  test('prepareQuizQuestion tworzy 4 opcje z poprawną odpowiedzią', async ({ page }) => {
+    await startGame(page);
+    await page.evaluate(() => { state = 'quiz'; startQuiz(); });
+    const info = await page.evaluate(() => ({
+      optionsCount: quizOptions.length,
+      hasCorrect: quizOptions.includes(quizCurrentWord.en),
+      correctIndex: quizCorrectAnswer,
+    }));
+    expect(info.optionsCount).toBe(4);
+    expect(info.hasCorrect).toBe(true);
+    expect(info.correctIndex).toBeGreaterThanOrEqual(0);
+    expect(info.correctIndex).toBeLessThanOrEqual(3);
+  });
+
+  test('quizOptions nie ma duplikatów', async ({ page }) => {
+    await startGame(page);
+    await page.evaluate(() => { state = 'quiz'; startQuiz(); });
+    const unique = await page.evaluate(() =>
+      quizOptions.length === new Set(quizOptions).size
+    );
+    expect(unique).toBe(true);
+  });
+});
+
+// ════════════════════════════════════════════════════════════════
+//  QUIZ — system nagród
+// ════════════════════════════════════════════════════════════════
+
+test.describe('Quiz — nagrody', () => {
+  test('wynik 0-5 daje brązową nagrodę (normal)', async ({ page }) => {
+    await startGame(page);
+    const reward = await page.evaluate(() => {
+      quizCorrectCount = 3;
+      return calculateQuizReward();
+    });
+    expect(reward.type).toBe('normal');
+  });
+
+  test('wynik 6-7 daje srebrną nagrodę (detonator lub lives2)', async ({ page }) => {
+    await startGame(page);
+    const reward = await page.evaluate(() => {
+      quizCorrectCount = 6;
+      return calculateQuizReward();
+    });
+    expect(['detonator', 'lives2']).toContain(reward.type);
+  });
+
+  test('wynik 8-9 daje złotą nagrodę (mega)', async ({ page }) => {
+    await startGame(page);
+    const reward = await page.evaluate(() => {
+      quizCorrectCount = 9;
+      return calculateQuizReward();
+    });
+    expect(reward.type).toBe('mega');
+  });
+
+  test('wynik 10 daje diamentową nagrodę (maxlife, freeze lub skin)', async ({ page }) => {
+    await startGame(page);
+    const reward = await page.evaluate(() => {
+      quizCorrectCount = 10;
+      return calculateQuizReward();
+    });
+    expect(['maxlife', 'freeze', 'skin']).toContain(reward.type);
+  });
+
+  test('nagroda freeze ustawia freezeTimer na 20', async ({ page }) => {
+    await startGame(page);
+    await page.evaluate(() => {
+      quizReward = { type: 'freeze', label: 'MROZ', color: '#44ddff' };
+      applyQuizReward();
+    });
+    expect(await g(page, () => freezeTimer)).toBe(20);
+  });
+
+  test('nagroda maxlife zwiększa maxLives (do 7)', async ({ page }) => {
+    await startGame(page);
+    await page.evaluate(() => {
+      maxLives = 5;
+      lives = 5;
+      quizReward = { type: 'maxlife', label: '+1', color: '#ff44ff' };
+      applyQuizReward();
+    });
+    expect(await g(page, () => maxLives)).toBe(6);
+    expect(await g(page, () => lives)).toBe(6);
+  });
+
+  test('maxLives nie przekracza 7', async ({ page }) => {
+    await startGame(page);
+    await page.evaluate(() => {
+      maxLives = 7;
+      lives = 7;
+      quizReward = { type: 'maxlife', label: '+1', color: '#ff44ff' };
+      applyQuizReward();
+    });
+    expect(await g(page, () => maxLives)).toBe(7);
+  });
+
+  test('nagroda detonator ustawia playerDetonator na true', async ({ page }) => {
+    await startGame(page);
+    await page.evaluate(() => {
+      playerDetonator = false;
+      quizReward = { type: 'detonator', label: 'DET', color: '#ff4444' };
+      applyQuizReward();
+    });
+    expect(await g(page, () => playerDetonator)).toBe(true);
+  });
+
+  test('nagroda lives2 dodaje 2 życia', async ({ page }) => {
+    await startGame(page);
+    await page.evaluate(() => {
+      lives = 2;
+      maxLives = 5;
+      quizReward = { type: 'lives2', label: '+2', color: '#44ff88' };
+      applyQuizReward();
+    });
+    expect(await g(page, () => lives)).toBe(4);
+  });
+
+  test('nagroda mega ustawia playerMega na true', async ({ page }) => {
+    await startGame(page);
+    await page.evaluate(() => {
+      playerMega = false;
+      quizReward = { type: 'mega', label: 'MEGA', color: '#ff00ff' };
+      applyQuizReward();
+    });
+    expect(await g(page, () => playerMega)).toBe(true);
+  });
+
+  test('nagroda skin odblokowuje nowy skin', async ({ page }) => {
+    await startGame(page);
+    await page.evaluate(() => {
+      unlockedSkins = ['default'];
+      quizReward = { type: 'skin', label: 'SKIN', color: '#ffaa00' };
+      applyQuizReward();
+    });
+    const count = await g(page, () => unlockedSkins.length);
+    expect(count).toBe(2);
+  });
+});
+
+// ════════════════════════════════════════════════════════════════
+//  MECHANIKA MROŻENIA
+// ════════════════════════════════════════════════════════════════
+
+test.describe('Mechanika mrożenia', () => {
+  test('freeze zatrzymuje roboty', async ({ page }) => {
+    await startGame(page);
+    await page.evaluate(() => {
+      freezeTimer = 10;
+      player.invince = 999;
+    });
+    const posBefore = await page.evaluate(() =>
+      robots.filter(r => r.alive).map(r => ({ x: r.x, y: r.y }))
+    );
+    await page.waitForTimeout(500);
+    const posAfter = await page.evaluate(() =>
+      robots.filter(r => r.alive).map(r => ({ x: r.x, y: r.y }))
+    );
+    for (let i = 0; i < Math.min(posBefore.length, posAfter.length); i++) {
+      expect(posAfter[i].x).toBe(posBefore[i].x);
+      expect(posAfter[i].y).toBe(posBefore[i].y);
+    }
+  });
+
+  test('freezeTimer odlicza się w dół', async ({ page }) => {
+    await startGame(page);
+    await page.evaluate(() => { freezeTimer = 5.0; });
+    await page.waitForFunction(() => freezeTimer < 4.5, { timeout: 3000 });
+    const ft = await g(page, () => freezeTimer);
+    expect(ft).toBeLessThan(5.0);
+    expect(ft).toBeGreaterThan(0);
+  });
+
+  test('roboty wracają do ruchu po wygaśnięciu freeze', async ({ page }) => {
+    await startGame(page);
+    await page.evaluate(() => {
+      freezeTimer = 0.3;
+      player.invince = 999;
+    });
+    await page.waitForFunction(() => freezeTimer <= 0, { timeout: 3000 });
+    const posBefore = await page.evaluate(() =>
+      robots.filter(r => r.alive).map(r => ({ x: r.x, y: r.y }))
+    );
+    await page.waitForTimeout(500);
+    const posAfter = await page.evaluate(() =>
+      robots.filter(r => r.alive).map(r => ({ x: r.x, y: r.y }))
+    );
+    const anyMoved = posBefore.some((b, i) =>
+      i < posAfter.length && (posAfter[i].x !== b.x || posAfter[i].y !== b.y)
+    );
+    expect(anyMoved).toBe(true);
+  });
+
+  test('freeze nie działa podczas pauzy', async ({ page }) => {
+    await startGame(page);
+    await page.evaluate(() => { freezeTimer = 5.0; });
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(100);
+    expect(await g(page, () => state)).toBe('paused');
+    const ftBefore = await g(page, () => freezeTimer);
+    await page.waitForTimeout(500);
+    const ftAfter = await g(page, () => freezeTimer);
+    expect(ftAfter).toBeCloseTo(ftBefore, 1);
+  });
+});
+
+// ════════════════════════════════════════════════════════════════
+//  SYSTEM SKINÓW
+// ════════════════════════════════════════════════════════════════
+
+test.describe('System skinów', () => {
+  test('SKINS zawiera 7 skinów', async ({ page }) => {
+    await startGame(page);
+    const count = await g(page, () => SKINS.length);
+    expect(count).toBe(7);
+  });
+
+  test('domyślny skin jest odblokowany na starcie', async ({ page }) => {
+    await startGame(page);
+    const hasDefault = await page.evaluate(() => unlockedSkins.includes('default'));
+    expect(hasDefault).toBe(true);
+  });
+
+  test('activeSkin domyślnie to default', async ({ page }) => {
+    await startGame(page);
+    expect(await g(page, () => activeSkin)).toBe('default');
+  });
+
+  test('odblokowanie skina dodaje go do unlockedSkins', async ({ page }) => {
+    await startGame(page);
+    await page.evaluate(() => {
+      unlockedSkins = ['default'];
+      unlockedSkins.push('explorer');
+      saveSkins();
+    });
+    const skins = await g(page, () => unlockedSkins);
+    expect(skins).toContain('explorer');
+    expect(skins.length).toBe(2);
+  });
+
+  test('skiny zachowują się w localStorage', async ({ page }) => {
+    await startGame(page);
+    await page.evaluate(() => {
+      unlockedSkins = ['default', 'knight'];
+      activeSkin = 'knight';
+      saveSkins();
+    });
+    await page.evaluate(() => { loadSkins(); });
+    expect(await g(page, () => unlockedSkins)).toContain('knight');
+    expect(await g(page, () => activeSkin)).toBe('knight');
+  });
+
+  test('skinMenuOpen otwiera menu skinów klawiszem S', async ({ page }) => {
+    await page.goto(GAME_URL);
+    await page.evaluate(() => { localStorage.clear(); });
+    await page.goto(GAME_URL);
+    await page.waitForTimeout(200);
+    expect(await g(page, () => state)).toBe('menu');
+    await page.keyboard.press('s');
+    await page.waitForTimeout(100);
+    expect(await g(page, () => skinMenuOpen)).toBe(true);
+  });
+
+  test('ESC zamyka menu skinów', async ({ page }) => {
+    await page.goto(GAME_URL);
+    await page.evaluate(() => { localStorage.clear(); });
+    await page.goto(GAME_URL);
+    await page.waitForTimeout(200);
+    await page.keyboard.press('s');
+    await page.waitForTimeout(100);
+    expect(await g(page, () => skinMenuOpen)).toBe(true);
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(100);
+    expect(await g(page, () => skinMenuOpen)).toBe(false);
+  });
+});
+
+// ════════════════════════════════════════════════════════════════
+//  ZAPIS/WCZYTYWANIE — nowe pola
+// ════════════════════════════════════════════════════════════════
+
+test.describe('Zapis/wczytywanie — nowe pola', () => {
+  test('buildSaveData zawiera freezeTimer, mysteryBoxUsed, maxLives', async ({ page }) => {
+    await startGame(page);
+    await page.evaluate(() => {
+      freezeTimer = 12.5;
+      mysteryBoxUsed = true;
+      maxLives = 6;
+    });
+    const save = await page.evaluate(() => buildSaveData());
+    expect(save.game.freezeTimer).toBe(12.5);
+    expect(save.game.mysteryBoxUsed).toBe(true);
+    expect(save.game.maxLives).toBe(6);
+  });
+
+  test('loadGameState przywraca freezeTimer, mysteryBoxUsed, maxLives', async ({ page }) => {
+    await startGame(page);
+    await page.evaluate(() => {
+      freezeTimer = 8;
+      mysteryBoxUsed = true;
+      maxLives = 7;
+      saveGameState();
+    });
+    await page.evaluate(() => {
+      freezeTimer = 0;
+      mysteryBoxUsed = false;
+      maxLives = 5;
+    });
+    await page.evaluate(() => loadGameState());
+    expect(await g(page, () => freezeTimer)).toBe(8);
+    expect(await g(page, () => mysteryBoxUsed)).toBe(true);
+    expect(await g(page, () => maxLives)).toBe(7);
+  });
+
+  test('quiz nie jest zapisywalnym stanem', async ({ page }) => {
+    await startGame(page);
+    const canSave = await page.evaluate(() => {
+      state = 'quiz';
+      return canSaveGameState();
+    });
+    expect(canSave).toBe(false);
+  });
+
+  test('mysteryBoxUsed resetuje się na nowym poziomie', async ({ page }) => {
+    await startGame(page);
+    await page.evaluate(() => { mysteryBoxUsed = true; });
+    await killAllRobots(page);
+    await waitForState(page, 'levelcomplete');
+    await page.evaluate(() => {
+      if (summaryCounters) { summaryCounters.done = true; summaryCounters.phase = 3; }
+    });
+    await page.keyboard.press('Enter');
+    await page.waitForFunction(() => state === 'playing', { timeout: 10000 });
+    expect(await g(page, () => mysteryBoxUsed)).toBe(false);
+  });
+
+  test('freezeTimer resetuje się na nowym poziomie', async ({ page }) => {
+    await startGame(page);
+    await page.evaluate(() => { freezeTimer = 10; });
+    await killAllRobots(page);
+    await waitForState(page, 'levelcomplete');
+    await page.evaluate(() => {
+      if (summaryCounters) { summaryCounters.done = true; summaryCounters.phase = 3; }
+    });
+    await page.keyboard.press('Enter');
+    await page.waitForFunction(() => state === 'playing', { timeout: 10000 });
+    expect(await g(page, () => freezeTimer)).toBe(0);
   });
 });

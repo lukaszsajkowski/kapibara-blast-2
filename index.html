@@ -2,7 +2,7 @@
 <html lang="pl">
 <head>
 <meta charset="UTF-8">
-<title>KAPIBARA BLAST</title>
+<title>KAPIBARA BLAST 2.0</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
 <style>
 * { margin:0; padding:0; box-sizing:border-box; }
@@ -128,7 +128,7 @@ canvas {
 </style>
 </head>
 <body>
-<div id="title">KAPIBARA BLAST</div>
+<div id="title">KAPIBARA BLAST 2.0</div>
 <div id="hud">
   <div>POZIOM: <span class="val" id="levelEl">1</span></div>
   <div>ZYCIA: <span class="val" id="livesEl">3</span></div>
@@ -828,6 +828,7 @@ const SKINS = [
 let unlockedSkins = ['default'];
 let activeSkin = 'default';
 let skinMenuOpen = false;
+let skinMenuIndex = 0;
 
 const LS_SKINS_KEY = 'kapibara_skins';
 const LS_ACTIVE_SKIN_KEY = 'kapibara_active_skin';
@@ -3845,7 +3846,7 @@ function draw(t) {
   if (state==='menu')          drawMenuScreen(t);
   if (state==='levelintro')    drawLevelIntro();
   if (state==='levelcomplete') drawLevelComplete();
-  if (state==='paused')        drawPauseScreen();
+  if (state==='paused')        drawPauseScreen(t);
   if (state==='gameover')      drawGameScreen('KONIEC GRY','#ff3030');
   if (state === 'quiz') drawQuizOverlay(t);
 }
@@ -4061,7 +4062,8 @@ function drawLevelComplete() {
   }
 }
 
-function drawPauseScreen() {
+function drawPauseScreen(t) {
+  if (skinMenuOpen) { drawSkinMenu(t); return; }
   ctx.fillStyle='rgba(5,5,15,0.7)';
   ctx.fillRect(0,0,W,H);
 
@@ -4072,7 +4074,7 @@ function drawPauseScreen() {
 
   ctx.fillStyle='#889';
   ctx.font=`16px 'Courier New'`;
-  ctx.fillText('ESC — KONTYNUUJ    R — RESTART    M — MUTE', W/2, H/2 + 30);
+  ctx.fillText('ESC — KONTYNUUJ    R — RESTART    S — SKINY    M — MUTE', W/2, H/2 + 30);
 }
 
 function drawSkinMenu(t) {
@@ -4103,6 +4105,13 @@ function drawSkinMenu(t) {
       ctx.strokeStyle = '#ffe14d'; ctx.lineWidth = 2;
       rr(sx - cellW / 2 + 8, sy - 45, cellW - 16, cellH - 10, 6);
       ctx.stroke();
+    }
+    if (i === skinMenuIndex) {
+      ctx.strokeStyle = '#88ccff'; ctx.lineWidth = 2;
+      ctx.setLineDash([4, 4]);
+      rr(sx - cellW / 2 + 6, sy - 47, cellW - 12, cellH - 6, 7);
+      ctx.stroke();
+      ctx.setLineDash([]);
     }
 
     if (isUnlocked) {
@@ -4137,7 +4146,7 @@ function drawSkinMenu(t) {
 
   ctx.fillStyle = '#556';
   ctx.font = "14px 'Courier New'";
-  ctx.fillText('ESC — WROC    KLIKNIJ SKIN ABY WYBRAC', W / 2, H - 40);
+  ctx.fillText('STRZALKI — WYBIERZ    ENTER — ZATWIERDZ    ESC — WROC', W / 2, H - 40);
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -4420,7 +4429,7 @@ function drawQuizChoice(t) {
   rr(bxBtn, by1, btnW, btnH, 6); ctx.stroke();
   ctx.fillStyle = '#44ff88';
   ctx.font = "bold 16px 'Courier New'";
-  ctx.fillText('PODEJMIJ WYZWANIE', W / 2, by1 + 30);
+  ctx.fillText('1 — PODEJMIJ WYZWANIE', W / 2, by1 + 30);
 
   const by2 = H / 2 + 85;
   ctx.fillStyle = '#2a2a1a';
@@ -4430,11 +4439,11 @@ function drawQuizChoice(t) {
   rr(bxBtn, by2, btnW, btnH, 6); ctx.stroke();
   ctx.fillStyle = '#ffe14d';
   ctx.font = "bold 16px 'Courier New'";
-  ctx.fillText('WEZ ZWYKLA NAGRODE', W / 2, by2 + 30);
+  ctx.fillText('2 — WEZ ZWYKLA NAGRODE', W / 2, by2 + 30);
 
   ctx.fillStyle = '#556';
   ctx.font = "13px 'Courier New'";
-  ctx.fillText('10 PYTAN — IM WIECEJ, TYM LEPSZA NAGRODA!', W / 2, H / 2 + 160);
+  ctx.fillText('1 — WYZWANIE    2 — NAGRODA    ESC — WROC', W / 2, H / 2 + 160);
 }
 
 function drawQuizQuestion(t) {
@@ -4486,7 +4495,7 @@ function drawQuizQuestion(t) {
 
     ctx.fillStyle = textColor;
     ctx.font = "bold 16px 'Courier New'";
-    ctx.fillText(quizOptions[i].toUpperCase(), bx + btnW / 2, by + 28);
+    ctx.fillText((i + 1) + ' — ' + quizOptions[i].toUpperCase(), bx + btnW / 2, by + 28);
   }
 }
 
@@ -4535,7 +4544,7 @@ function drawQuizResult(t) {
   rr(bx, by, btnW, btnH, 6); ctx.stroke();
   ctx.fillStyle = '#44ff88';
   ctx.font = "bold 16px 'Courier New'";
-  ctx.fillText('KONTYNUUJ', W / 2, by + 30);
+  ctx.fillText('ENTER — KONTYNUUJ', W / 2, by + 30);
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -4571,6 +4580,29 @@ window.addEventListener('keydown', e=>{
       const types = [PU_RANGE, PU_SPEED, PU_LIFE, PU_BOMBS];
       applyPowerup(types[Math.floor(Math.random() * types.length)]);
       state = 'playing';
+    } else if (quizPhase === 'choice') {
+      if (e.key === '1') startQuiz();
+      else if (e.key === '2') {
+        const types = [PU_RANGE, PU_SPEED, PU_LIFE, PU_BOMBS, PU_SHIELD, PU_GHOST, PU_DETONATOR, PU_MEGA];
+        applyPowerup(types[Math.floor(Math.random() * types.length)]);
+        sfxPowerup();
+        spawnFloatingText(player.x + TILE / 2, player.y, 'NAGRODA!', '#ffe14d');
+        state = 'playing';
+      }
+    } else if (quizPhase === 'question') {
+      const idx = ['1','2','3','4'].indexOf(e.key);
+      if (idx >= 0 && quizSelectedAnswer === -1) {
+        quizSelectedAnswer = idx;
+        if (idx === quizCorrectAnswer) { quizCorrectCount++; sfxQuizCorrect(); }
+        else { sfxQuizWrong(); }
+        quizPhase = 'feedback';
+        quizFeedbackTimer = 1.0;
+      }
+    } else if (quizPhase === 'result') {
+      if (e.key === 'Enter' || e.key === ' ') {
+        applyQuizReward();
+        state = 'playing';
+      }
     }
     return;
   }
@@ -4586,11 +4618,37 @@ window.addEventListener('keydown', e=>{
     }
     if (e.key==='n'||e.key==='N') { ensureAudio(); startNewGame(); }
     if (e.key==='h'||e.key==='H') showingHighScores = true;
-    if (e.key==='s'||e.key==='S') skinMenuOpen = true;
-    if (skinMenuOpen && (e.key==='Escape'||e.key==='Backspace')) { skinMenuOpen = false; return; }
+    if ((e.key==='s'||e.key==='S') && !skinMenuOpen) { skinMenuOpen = true; skinMenuIndex = SKINS.findIndex(s => s.id === activeSkin) || 0; return; }
+    if (skinMenuOpen) {
+      const cols = 4;
+      if (e.key==='Escape'||e.key==='Backspace') { skinMenuOpen = false; return; }
+      if (e.key==='ArrowRight') skinMenuIndex = Math.min(skinMenuIndex + 1, SKINS.length - 1);
+      if (e.key==='ArrowLeft') skinMenuIndex = Math.max(skinMenuIndex - 1, 0);
+      if (e.key==='ArrowDown') skinMenuIndex = Math.min(skinMenuIndex + cols, SKINS.length - 1);
+      if (e.key==='ArrowUp') skinMenuIndex = Math.max(skinMenuIndex - cols, 0);
+      if (e.key==='Enter' && unlockedSkins.includes(SKINS[skinMenuIndex].id)) {
+        activeSkin = SKINS[skinMenuIndex].id;
+        saveSkins();
+      }
+      return;
+    }
     return;
   }
   if (state==='paused') {
+    if ((e.key==='s'||e.key==='S') && !skinMenuOpen) { skinMenuOpen = true; skinMenuIndex = SKINS.findIndex(s => s.id === activeSkin) || 0; return; }
+    if (skinMenuOpen) {
+      const cols = 4;
+      if (e.key==='Escape'||e.key==='Backspace') { skinMenuOpen = false; return; }
+      if (e.key==='ArrowRight') skinMenuIndex = Math.min(skinMenuIndex + 1, SKINS.length - 1);
+      if (e.key==='ArrowLeft') skinMenuIndex = Math.max(skinMenuIndex - 1, 0);
+      if (e.key==='ArrowDown') skinMenuIndex = Math.min(skinMenuIndex + cols, SKINS.length - 1);
+      if (e.key==='ArrowUp') skinMenuIndex = Math.max(skinMenuIndex - cols, 0);
+      if (e.key==='Enter' && unlockedSkins.includes(SKINS[skinMenuIndex].id)) {
+        activeSkin = SKINS[skinMenuIndex].id;
+        saveSkins();
+      }
+      return;
+    }
     if (e.key==='Escape'||e.key==='p'||e.key==='P') { state='playing'; saveGameState(); }
     else if (e.key==='r'||e.key==='R') startNewGame();
     return;
