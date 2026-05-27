@@ -1255,9 +1255,25 @@ function update(dt) {
     }
   } else if (state==='paused') {
     // frozen
+  } else if (state === 'quiz') {
+    if (quizPhase === 'feedback') {
+      quizFeedbackTimer -= dt;
+      if (quizFeedbackTimer <= 0) {
+        quizQuestionIndex++;
+        if (quizQuestionIndex >= 10) {
+          quizPhase = 'result';
+          quizReward = calculateQuizReward();
+          sfxQuizReward();
+        } else {
+          prepareQuizQuestion();
+          quizPhase = 'question';
+        }
+      }
+    }
   } else if (state==='playing') {
     levelTime += dt;
     spikesTimer += dt;
+    if (freezeTimer > 0) freezeTimer = Math.max(0, freezeTimer - dt);
     teleportCooldown = Math.max(0, teleportCooldown - dt);
     const wasGhost = playerGhost > 0;
     playerGhost = Math.max(0, playerGhost - dt);
@@ -1405,6 +1421,18 @@ function updatePlayer(dt) {
   }
   else p.frame=0;
 
+  // Mystery box pickup
+  if (!mysteryBoxUsed) {
+    const ptx = Math.round(p.x / TILE), pty = Math.round(p.y / TILE);
+    if (map[pty] && map[pty][ptx] === MYSTERY_BOX) {
+      map[pty][ptx] = FLOOR;
+      mysteryBoxUsed = true;
+      state = 'quiz';
+      quizPhase = 'choice';
+      sfxMysteryBox();
+    }
+  }
+
   // Plant bomb / detonate
   if ((keys[' ']||keys['Space']) && p.bombCooldown<=0) {
     // If detonator bomb is placed, detonate it
@@ -1431,6 +1459,7 @@ function updatePlayer(dt) {
 }
 
 function updateRobots(dt) {
+  if (freezeTimer > 0) return;
   const toAdd = []; // for splitter spawns
   robots.forEach(r=>{
     if (!r.alive || isNaN(r.x) || isNaN(r.y)) { r.alive = false; return; }
@@ -2825,6 +2854,7 @@ function draw(t) {
   if (state==='levelcomplete') drawLevelComplete();
   if (state==='paused')        drawPauseScreen();
   if (state==='gameover')      drawGameScreen('KONIEC GRY','#ff3030');
+  if (state === 'quiz') drawQuizOverlay(t);
 }
 
 function drawGameScreen(text, color) {
@@ -3048,6 +3078,169 @@ function drawPauseScreen() {
 }
 
 // ════════════════════════════════════════════════════════════════
+//  QUIZ SYSTEM
+// ════════════════════════════════════════════════════════════════
+function startQuiz() {
+  const shuffled = [...QUIZ_WORDS].sort(() => Math.random() - 0.5);
+  quizWords = shuffled.slice(0, 10);
+  quizQuestionIndex = 0;
+  quizCorrectCount = 0;
+  quizSelectedAnswer = -1;
+  quizCorrectAnswer = -1;
+  quizPhase = 'question';
+  prepareQuizQuestion();
+}
+
+function prepareQuizQuestion() {
+  quizCurrentWord = quizWords[quizQuestionIndex];
+  quizSelectedAnswer = -1;
+  const sameCategory = QUIZ_WORDS.filter(w => w.category === quizCurrentWord.category && w.en !== quizCurrentWord.en);
+  const otherWords = QUIZ_WORDS.filter(w => w.en !== quizCurrentWord.en);
+  const wrongPool = sameCategory.length >= 3 ? sameCategory : otherWords;
+  const shuffledWrong = wrongPool.sort(() => Math.random() - 0.5).slice(0, 3);
+  const options = [quizCurrentWord.en, ...shuffledWrong.map(w => w.en)];
+  for (let i = options.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [options[i], options[j]] = [options[j], options[i]];
+  }
+  quizOptions = options;
+  quizCorrectAnswer = options.indexOf(quizCurrentWord.en);
+}
+
+function handleQuizClick(canvasX, canvasY) {
+  if (quizPhase === 'choice') {
+    const btnW = 280, btnH = 50;
+    const bx = W / 2 - btnW / 2;
+    const by1 = H / 2 + 20, by2 = H / 2 + 85;
+    if (canvasX >= bx && canvasX <= bx + btnW) {
+      if (canvasY >= by1 && canvasY <= by1 + btnH) {
+        startQuiz();
+      } else if (canvasY >= by2 && canvasY <= by2 + btnH) {
+        const types = [PU_RANGE, PU_SPEED, PU_LIFE, PU_BOMBS, PU_SHIELD, PU_GHOST, PU_DETONATOR, PU_MEGA];
+        const type = types[Math.floor(Math.random() * types.length)];
+        applyPowerup(type);
+        sfxPowerup();
+        spawnFloatingText(player.x + TILE / 2, player.y, 'NAGRODA!', '#ffe14d');
+        state = 'playing';
+      }
+    }
+  } else if (quizPhase === 'question') {
+    const btnW = 200, btnH = 44;
+    const gap = 16;
+    const gridX = W / 2 - btnW - gap / 2;
+    const gridY = H / 2 + 80;
+    for (let i = 0; i < 4; i++) {
+      const col = i % 2, row = Math.floor(i / 2);
+      const bx = gridX + col * (btnW + gap);
+      const by = gridY + row * (btnH + gap);
+      if (canvasX >= bx && canvasX <= bx + btnW && canvasY >= by && canvasY <= by + btnH) {
+        quizSelectedAnswer = i;
+        if (i === quizCorrectAnswer) {
+          quizCorrectCount++;
+          sfxQuizCorrect();
+        } else {
+          sfxQuizWrong();
+        }
+        quizPhase = 'feedback';
+        quizFeedbackTimer = 1.0;
+        break;
+      }
+    }
+  } else if (quizPhase === 'result') {
+    const btnW = 200, btnH = 50;
+    const bx = W / 2 - btnW / 2;
+    const by = H / 2 + 120;
+    if (canvasX >= bx && canvasX <= bx + btnW && canvasY >= by && canvasY <= by + btnH) {
+      applyQuizReward();
+      state = 'playing';
+    }
+  }
+}
+
+function calculateQuizReward() {
+  const n = quizCorrectCount;
+  if (n >= 10) {
+    const pool = [];
+    pool.push({ type: 'maxlife', label: '+1 MAKS. ZYCIE', color: '#ff44ff' });
+    pool.push({ type: 'freeze', label: 'BOMBA MROZU (20s)', color: '#44ddff' });
+    const lockedSkins = SKINS.filter(s => !unlockedSkins.includes(s.id));
+    if (lockedSkins.length > 0) {
+      pool.push({ type: 'skin', label: 'NOWY SKIN!', color: '#ffaa00' });
+    }
+    return pool[Math.floor(Math.random() * pool.length)];
+  } else if (n >= 8) {
+    return { type: 'mega', label: 'MEGA BOMBA!', color: '#ff00ff' };
+  } else if (n >= 6) {
+    const pool = [
+      { type: 'detonator', label: 'DETONATOR!', color: '#ff4444' },
+      { type: 'lives2', label: '+2 ZYCIA', color: '#44ff88' },
+    ];
+    return pool[Math.floor(Math.random() * pool.length)];
+  } else {
+    return { type: 'normal', label: 'ZWYKLA NAGRODA', color: '#ffe14d' };
+  }
+}
+
+function applyQuizReward() {
+  if (!quizReward) return;
+  switch (quizReward.type) {
+    case 'normal': {
+      const types = [PU_RANGE, PU_SPEED, PU_LIFE, PU_BOMBS, PU_SHIELD, PU_GHOST, PU_DETONATOR, PU_MEGA];
+      applyPowerup(types[Math.floor(Math.random() * types.length)]);
+      break;
+    }
+    case 'detonator':
+      playerDetonator = true;
+      spawnFloatingText(player.x + TILE / 2, player.y, 'DETONATOR!', '#ff4444');
+      break;
+    case 'lives2':
+      lives = Math.min(lives + 2, maxLives);
+      spawnFloatingText(player.x + TILE / 2, player.y, '+2 ZYCIA!', '#44ff88');
+      break;
+    case 'mega':
+      playerMega = true;
+      spawnFloatingText(player.x + TILE / 2, player.y, 'MEGA BOMBA!', '#ff00ff');
+      break;
+    case 'maxlife':
+      if (maxLives < 7) {
+        maxLives++;
+        lives = Math.min(lives + 1, maxLives);
+        spawnFloatingText(player.x + TILE / 2, player.y, `MAKS. ZYCIA: ${maxLives}!`, '#ff44ff');
+      } else {
+        lives = Math.min(lives + 1, maxLives);
+        spawnFloatingText(player.x + TILE / 2, player.y, '+1 ZYCIE!', '#44ff88');
+      }
+      break;
+    case 'freeze':
+      freezeTimer = 20;
+      spawnFloatingText(player.x + TILE / 2, player.y, 'MROZ 20s!', '#44ddff');
+      sfxFreeze();
+      break;
+    case 'skin': {
+      const locked = SKINS.filter(s => !unlockedSkins.includes(s.id));
+      if (locked.length > 0) {
+        const newSkin = locked[Math.floor(Math.random() * locked.length)];
+        unlockedSkins.push(newSkin.id);
+        saveSkins();
+        spawnFloatingText(player.x + TILE / 2, player.y, `SKIN: ${newSkin.name.toUpperCase()}!`, '#ffaa00');
+      }
+      break;
+    }
+  }
+  hud();
+  saveGameState();
+}
+
+// Audio stubs — implemented in Task 7
+function sfxMysteryBox() {}
+function sfxQuizCorrect() {}
+function sfxQuizWrong() {}
+function sfxQuizReward() {}
+function sfxFreeze() {}
+
+function drawQuizOverlay(t) {} // Implemented in Task 4
+
+// ════════════════════════════════════════════════════════════════
 //  LOOP
 // ════════════════════════════════════════════════════════════════
 function loop(ts) {
@@ -3208,11 +3401,30 @@ document.querySelectorAll('#touch-actions .touch-btn').forEach(btn => {
 });
 
 // Prevent default touch behavior on canvas
-canvas.addEventListener('touchstart', e => e.preventDefault(), {passive:false});
+canvas.addEventListener('touchstart', e => {
+  e.preventDefault();
+  if (state === 'quiz' && e.touches.length > 0) {
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = W / rect.width;
+    const scaleY = H / rect.height;
+    const canvasX = (e.touches[0].clientX - rect.left) * scaleX;
+    const canvasY = (e.touches[0].clientY - rect.top) * scaleY;
+    handleQuizClick(canvasX, canvasY);
+  }
+}, {passive:false});
 canvas.addEventListener('touchmove', e => e.preventDefault(), {passive:false});
 
 // Prevent mouse clicks from disrupting gameplay; also advance on click for levelcomplete
 document.addEventListener('mousedown', e => {
+  if (state === 'quiz') {
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = W / rect.width;
+    const scaleY = H / rect.height;
+    const canvasX = (e.clientX - rect.left) * scaleX;
+    const canvasY = (e.clientY - rect.top) * scaleY;
+    handleQuizClick(canvasX, canvasY);
+    return;
+  }
   if (state === 'playing' || state === 'paused' || state === 'levelintro' || state === 'levelcomplete') e.preventDefault();
   if (state === 'levelcomplete' && summaryCounters) {
     if (summaryCounters.done) startLevel();
