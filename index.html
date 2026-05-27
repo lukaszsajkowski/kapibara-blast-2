@@ -1058,6 +1058,30 @@ function placeMapElements() {
       map[sy][sx] = SPIKES;
     }
   }
+
+  // Mystery Box — one per level, upper-left quadrant
+  const mbCandidates = [];
+  for (let y = 1; y <= 5; y++) {
+    for (let x = 1; x <= 6; x++) {
+      if (map[y][x] === FLOOR) {
+        if (x <= 2 && y <= 2) continue;
+        mbCandidates.push([x, y]);
+      }
+    }
+  }
+  if (mbCandidates.length > 0) {
+    const [mx, my] = mbCandidates[Math.floor(Math.random() * mbCandidates.length)];
+    map[my][mx] = MYSTERY_BOX;
+  } else {
+    for (let y = 1; y <= 5; y++) {
+      for (let x = 1; x <= 6; x++) {
+        if (map[y][x] === CRATE) {
+          map[y][x] = MYSTERY_BOX;
+          return;
+        }
+      }
+    }
+  }
 }
 
 function mkMap_density() {
@@ -1113,6 +1137,7 @@ function solidForRobot(tx,ty,robotType) {
   const t = map[ty][tx];
   if (t===WALL) return true;
   if (t===CRATE && robotType!==RT_GHOST) return true;
+  if (t === MYSTERY_BOX) return true;
   if (hasBomb(tx,ty)) return true;
   return false;
 }
@@ -1552,6 +1577,10 @@ function explode(bomb) {
         spawnParticles(cx, cy, '#8a5228', 6, 120, 0.6, 4);
         spawnParticles(cx, cy, '#6b3e1e', 4, 80, 0.5, 5);
         if (!bomb.isMega) break; // mega blasts through crates
+      }
+      if (map[ey][ex] === MYSTERY_BOX) {
+        if (!bomb.isMega) break;
+        continue;
       }
     }
   });
@@ -2024,6 +2053,8 @@ function drawMap() {
       drawIce(px, py);
     } else if (t===SPIKES) {
       drawSpikes(px, py, spikesOn, t_now);
+    } else if (t === MYSTERY_BOX) {
+      drawMysteryBox(px, py, t_now);
     }
   }
 }
@@ -2170,6 +2201,42 @@ function drawCrate(px,py) {
   ctx.fillStyle=C.crateX;
   ctx.fillRect(px+TILE/2-1.5,py+6,3,TILE-12);
   ctx.fillRect(px+6,py+TILE/2-1.5,TILE-12,3);
+}
+
+function drawMysteryBox(px, py, t) {
+  const pulse = 1 + Math.sin(t * 3) * 0.03;
+  const cx = px + TILE / 2, cy = py + TILE / 2;
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.scale(pulse, pulse);
+  ctx.translate(-cx, -cy);
+
+  ctx.fillStyle = '#141828';
+  ctx.fillRect(px, py, TILE, TILE);
+
+  ctx.fillStyle = '#7a4420';
+  ctx.fillRect(px + 3, py + 3, TILE - 6, TILE - 6);
+  ctx.fillStyle = '#9a6030';
+  ctx.fillRect(px + 3, py + 3, TILE - 6, 4);
+  ctx.fillRect(px + 3, py + 3, 4, TILE - 6);
+  ctx.fillStyle = '#5a3010';
+  ctx.fillRect(px + 3, py + TILE - 7, TILE - 6, 4);
+  ctx.fillRect(px + TILE - 7, py + 3, 4, TILE - 6);
+
+  ctx.fillStyle = '#8899aa';
+  ctx.fillRect(px + 6, py + TILE / 2 - 1, TILE - 12, 3);
+  ctx.fillRect(px + TILE / 2 - 1, py + 6, 3, TILE - 12);
+
+  ctx.fillStyle = '#ffe14d';
+  ctx.font = `bold ${TILE * 0.55}px 'Courier New'`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.shadowColor = '#ffe14d';
+  ctx.shadowBlur = 8 + Math.sin(t * 4) * 4;
+  ctx.fillText('?', cx, cy + 1);
+  ctx.shadowBlur = 0;
+
+  ctx.restore();
 }
 
 // ════════════════════════════════════════════════════════════════
