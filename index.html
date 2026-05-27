@@ -360,6 +360,9 @@ function buildSaveData() {
       EXPL_RANGE,
       MAX_BOMBS,
       detonatorBombIndex: detonatorBomb ? bombs.indexOf(detonatorBomb) : -1,
+      freezeTimer,
+      mysteryBoxUsed,
+      maxLives,
     }
   };
 }
@@ -417,6 +420,9 @@ function loadGameState() {
     EXPL_RANGE = typeof g.EXPL_RANGE === 'number' ? g.EXPL_RANGE : 2;
     MAX_BOMBS = typeof g.MAX_BOMBS === 'number' ? g.MAX_BOMBS : 1;
     detonatorBomb = Number.isInteger(g.detonatorBombIndex) && g.detonatorBombIndex >= 0 ? bombs[g.detonatorBombIndex] || null : null;
+    freezeTimer = typeof g.freezeTimer === 'number' ? g.freezeTimer : 0;
+    mysteryBoxUsed = !!g.mysteryBoxUsed;
+    maxLives = typeof g.maxLives === 'number' ? g.maxLives : 5;
 
     keys = {};
     pendingScore = null;
@@ -4557,6 +4563,15 @@ window.addEventListener('keydown', e=>{
     toggleMute();
     $mute.textContent = muted ? '🔇' : '🔊';
     saveSettings();
+    return;
+  }
+
+  if (state === 'quiz') {
+    if (e.key === 'Escape') {
+      const types = [PU_RANGE, PU_SPEED, PU_LIFE, PU_BOMBS];
+      applyPowerup(types[Math.floor(Math.random() * types.length)]);
+      state = 'playing';
+    }
     return;
   }
 
