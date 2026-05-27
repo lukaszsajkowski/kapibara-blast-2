@@ -1,4 +1,4 @@
-# KAPIBARA BLAST
+# KAPIBARA BLAST 2.0
 
 A Bomberman-style arcade browser game where you play as a capybara superhero fighting robots on a grid-based arena.
 
@@ -10,27 +10,34 @@ Open `index.html` in a browser.
 
 ## Controls
 
-| Action  | Key              |
-|---------|------------------|
-| Move    | WASD / Arrow keys |
-| Bomb    | Space            |
-| Pause   | ESC / P          |
-| Restart | R                |
-| Mute    | M                |
+| Action         | Key               |
+|----------------|-------------------|
+| Move           | WASD / Arrow keys |
+| Bomb           | Space             |
+| Pause          | ESC / P           |
+| Restart        | R                 |
+| Mute           | M                 |
+| Skins          | S                 |
+| Quiz answers   | 1-4               |
 
 Touch controls are available on mobile.
 
 ## Features
 
 - 15x13 grid arena with destructible crates and indestructible walls
-- 4 robot types with different AI, speed, and HP (Basic, Chaser, Speeder, Tank)
+- 6 robot types: Basic, Chaser, Speeder, Tank, Splitter, Boss
 - Bomb system with cross-shaped explosions and configurable blast radius
-- Power-ups: range, speed, extra life, additional bombs
-- Multi-level progression with increasing difficulty
+- Power-ups: range, speed, extra life, extra bombs, shield, ghost, detonator, mega bomb
+- Map elements: teleports, spikes
+- Mystery Box with Polish-to-English vocabulary quiz (10 questions per quiz)
+- Tiered quiz rewards: random powerup, remote bomb, extra lives, mega bomb, freeze bomb, skin unlock
+- Freeze bomb mechanic — freezes all robots for 20 seconds
+- 7 capybara skins (default + 6 unlockable), selectable from menu or pause screen
+- Multi-level progression with increasing difficulty and boss fights every 5 levels
 - Combo scoring system and time bonuses
 - Particle effects, screen shake, and procedural audio
-- Start screen, pause menu, and level summary screens
-- High score tracking via localStorage
+- Start screen, pause menu, level summary, and skin selection screens
+- High score tracking and game save via localStorage
 - Dark pixel-art aesthetic rendered entirely in code
 
 ## Tech
