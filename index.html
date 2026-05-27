@@ -204,6 +204,7 @@ const TELEPORT_A = 3;
 const TELEPORT_B = 4;
 const ICE        = 5;
 const SPIKES     = 6;
+const MYSTERY_BOX = 7;
 
 // ════════════════════════════════════════════════════════════════
 //  SETUP
@@ -790,6 +791,57 @@ let detonatorBomb = null;    // ref to placed detonator bomb
 let teleportCooldown = 0;   // prevent teleport loops
 let spikesTimer = 0;        // global spike cycle timer
 
+// Mystery Box & Quiz state
+let mysteryBoxUsed = false;
+let quizPhase = 'choice';
+let quizQuestionIndex = 0;
+let quizCorrectCount = 0;
+let quizCurrentWord = null;
+let quizOptions = [];
+let quizSelectedAnswer = -1;
+let quizCorrectAnswer = -1;
+let quizFeedbackTimer = 0;
+let quizWords = [];
+let quizReward = null;
+
+// Freeze bomb
+let freezeTimer = 0;
+
+// Skins
+let maxLives = 5;
+
+const SKINS = [
+  { id: 'default', name: 'Kapibara', particles: null },
+  { id: 'explorer', name: 'Odkrywca', particles: 'dust' },
+  { id: 'knight', name: 'Rycerz', particles: 'sparks' },
+  { id: 'pirate', name: 'Pirat', particles: 'drops' },
+  { id: 'astronaut', name: 'Kosmonauta', particles: 'bubbles' },
+  { id: 'wizard', name: 'Czarodziej', particles: 'stars' },
+  { id: 'ninja', name: 'Ninja', particles: 'smoke' },
+];
+let unlockedSkins = ['default'];
+let activeSkin = 'default';
+let skinMenuOpen = false;
+
+const LS_SKINS_KEY = 'kapibara_skins';
+const LS_ACTIVE_SKIN_KEY = 'kapibara_active_skin';
+
+function loadSkins() {
+  try {
+    const raw = localStorage.getItem(LS_SKINS_KEY);
+    if (raw) unlockedSkins = JSON.parse(raw);
+    activeSkin = localStorage.getItem(LS_ACTIVE_SKIN_KEY) || 'default';
+    if (!unlockedSkins.includes(activeSkin)) activeSkin = 'default';
+  } catch(e) {}
+}
+
+function saveSkins() {
+  try {
+    localStorage.setItem(LS_SKINS_KEY, JSON.stringify(unlockedSkins));
+    localStorage.setItem(LS_ACTIVE_SKIN_KEY, activeSkin);
+  } catch(e) {}
+}
+
 function mkMap() {
   const m = [];
   for (let y=0; y<ROWS; y++) {
@@ -837,6 +889,10 @@ function reset() {
   shake=0; shakeT=0;
   playerShield=false; playerGhost=0; playerDetonator=false; playerMega=false;
   detonatorBomb=null; teleportCooldown=0; spikesTimer=0; playerSlide=null;
+  mysteryBoxUsed=false; freezeTimer=0; maxLives=5;
+  quizPhase='choice'; quizQuestionIndex=0; quizCorrectCount=0;
+  quizCurrentWord=null; quizOptions=[]; quizSelectedAnswer=-1; quizCorrectAnswer=-1;
+  quizFeedbackTimer=0; quizWords=[]; quizReward=null;
   highScoreSaved=false; showingHighScores=false;
   ensureAudio();
   state='_reset';
@@ -940,6 +996,8 @@ function startLevel() {
   bombs=[]; explosions=[]; powerups=[]; robotDebris=[];
   detonatorBomb=null; teleportCooldown=0; spikesTimer=0;
   playerGhost=0; playerShield=false; playerDetonator=false; playerMega=false;
+  mysteryBoxUsed = false;
+  freezeTimer = 0;
 
   const types = robotsForLevel(level);
   const positions = spawnPositions(types.length);
@@ -3004,6 +3062,7 @@ map = mkMap(); player = mkPlayer(); robots=[]; bombs=[]; explosions=[]; powerups
 score=0; lives=3; level=1; levelTime=0; comboCount=0; comboTimer=0;
 shake=0; shakeT=0; bombsActive=0; playerSlide=null;
 highScoreSaved=false;
+loadSkins();
 // Apply saved mute state to UI
 $mute.textContent = muted ? '🔇' : '🔊';
 hud();
