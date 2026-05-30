@@ -4129,6 +4129,10 @@ function drawPauseScreen(t) {
   ctx.fillStyle='#889';
   ctx.font=`16px 'Courier New'`;
   ctx.fillText('ESC — KONTYNUUJ    R — RESTART    S — SKINY    M — MUTE', W/2, H/2 + 30);
+
+  ctx.fillStyle='#667';
+  ctx.font=`14px 'Courier New'`;
+  ctx.fillText('B — MEGA BOMBA (' + megaBombCount + ')    V — ZAMROŻENIE (' + freezeCount + ')', W/2, H/2 + 60);
 }
 
 function drawSkinMenu(t) {
