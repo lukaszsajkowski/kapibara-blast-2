@@ -2649,7 +2649,7 @@ function isMaxedOut(type) {
   if (type===PU_BOMBS)  return MAX_BOMBS >= 4;
   if (type===PU_SHIELD) return playerShield === true;
   if (type===PU_DETONATOR) return playerDetonator === true;
-  if (type===PU_MEGA)   return playerMega === true;
+  if (type===PU_MEGA)   return false;
   return false;
 }
 
@@ -2661,7 +2661,7 @@ function applyPowerup(type) {
   if (type===PU_SHIELD) { playerShield = true; score+=50; spawnFloatingText(player.x+TILE/2, player.y, 'TARCZA!', '#44ddff'); }
   if (type===PU_GHOST)  { playerGhost = 8; score+=50; spawnFloatingText(player.x+TILE/2, player.y, 'DUCH 8s!', '#bb88ff'); }
   if (type===PU_DETONATOR) { playerDetonator = true; score+=50; spawnFloatingText(player.x+TILE/2, player.y, 'DETONATOR!', '#ff4444'); }
-  if (type===PU_MEGA)   { playerMega = true; score+=50; spawnFloatingText(player.x+TILE/2, player.y, 'MEGA BOMBA!', '#ff00ff'); }
+  if (type===PU_MEGA)   { megaBombCount++; score+=50; spawnFloatingText(player.x+TILE/2, player.y, 'MEGA BOMBA!', '#ff00ff'); }
   hud();
   saveGameState();
 }
@@ -4274,7 +4274,7 @@ function applyQuizReward() {
       spawnFloatingText(player.x + TILE / 2, player.y, '+2 ZYCIA!', '#44ff88');
       break;
     case 'mega':
-      playerMega = true;
+      megaBombCount++;
       spawnFloatingText(player.x + TILE / 2, player.y, 'MEGA BOMBA!', '#ff00ff');
       break;
     case 'maxlife':
@@ -4288,9 +4288,8 @@ function applyQuizReward() {
       }
       break;
     case 'freeze':
-      freezeTimer = 20;
-      spawnFloatingText(player.x + TILE / 2, player.y, 'MROZ 20s!', '#44ddff');
-      sfxFreeze();
+      freezeCount++;
+      spawnFloatingText(player.x + TILE / 2, player.y, 'MROZ!', '#44ddff');
       break;
     case 'skin': {
       const locked = SKINS.filter(s => !unlockedSkins.includes(s.id));
