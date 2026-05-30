@@ -760,13 +760,12 @@ test.describe('Mechanika ducha', () => {
     expect(pos.y).toBeCloseTo(tile, -1);
   });
 
-  test('powerupy resetują się przy nowym poziomie', async ({ page }) => {
+  test('powerupy resetują się przy nowym poziomie (ghost, shield, detonator)', async ({ page }) => {
     await startGame(page);
     await page.evaluate(() => {
       playerGhost = 5;
       playerShield = true;
       playerDetonator = true;
-      playerMega = true;
     });
     await killAllRobots(page);
     await waitForState(page, 'levelcomplete');
@@ -780,12 +779,10 @@ test.describe('Mechanika ducha', () => {
       ghost: playerGhost,
       shield: playerShield,
       detonator: playerDetonator,
-      mega: playerMega,
     }));
     expect(powerups.ghost).toBe(0);
     expect(powerups.shield).toBe(false);
     expect(powerups.detonator).toBe(false);
-    expect(powerups.mega).toBe(false);
   });
 });
 
@@ -1463,13 +1460,14 @@ test.describe('Quiz — nagrody', () => {
     expect(['maxlife', 'freeze', 'skin']).toContain(reward.type);
   });
 
-  test('nagroda freeze ustawia freezeTimer na 20', async ({ page }) => {
+  test('nagroda freeze zwiększa freezeCount', async ({ page }) => {
     await startGame(page);
     await page.evaluate(() => {
+      freezeCount = 0;
       quizReward = { type: 'freeze', label: 'MROZ', color: '#44ddff' };
       applyQuizReward();
     });
-    expect(await g(page, () => freezeTimer)).toBe(20);
+    expect(await g(page, () => freezeCount)).toBe(1);
   });
 
   test('nagroda maxlife zwiększa maxLives (do 7)', async ({ page }) => {
@@ -1516,14 +1514,14 @@ test.describe('Quiz — nagrody', () => {
     expect(await g(page, () => lives)).toBe(4);
   });
 
-  test('nagroda mega ustawia playerMega na true', async ({ page }) => {
+  test('nagroda mega zwiększa megaBombCount', async ({ page }) => {
     await startGame(page);
     await page.evaluate(() => {
-      playerMega = false;
+      megaBombCount = 0;
       quizReward = { type: 'mega', label: 'MEGA', color: '#ff00ff' };
       applyQuizReward();
     });
-    expect(await g(page, () => playerMega)).toBe(true);
+    expect(await g(page, () => megaBombCount)).toBe(1);
   });
 
   test('nagroda skin odblokowuje nowy skin', async ({ page }) => {
@@ -1745,5 +1743,182 @@ test.describe('Zapis/wczytywanie — nowe pola', () => {
     await page.keyboard.press('Enter');
     await page.waitForFunction(() => state === 'playing', { timeout: 10000 });
     expect(await g(page, () => freezeTimer)).toBe(0);
+  });
+});
+
+// ════════════════════════════════════════════════════════════════
+//  SYSTEM EKWIPUNKU — mega bomba i freeze
+// ════════════════════════════════════════════════════════════════
+
+test.describe('Ekwipunek power-upów', () => {
+  test('megaBombCount i freezeCount startują od 0', async ({ page }) => {
+    await startGame(page);
+    expect(await g(page, () => megaBombCount)).toBe(0);
+    expect(await g(page, () => freezeCount)).toBe(0);
+  });
+
+  test('zebranie MEGA power-upa zwiększa megaBombCount', async ({ page }) => {
+    await startGame(page);
+    await page.evaluate(() => { megaBombCount = 0; applyPowerup(PU_MEGA); });
+    expect(await g(page, () => megaBombCount)).toBe(1);
+  });
+
+  test('mega bomby stackują się', async ({ page }) => {
+    await startGame(page);
+    await page.evaluate(() => {
+      megaBombCount = 0;
+      applyPowerup(PU_MEGA);
+      applyPowerup(PU_MEGA);
+      applyPowerup(PU_MEGA);
+    });
+    expect(await g(page, () => megaBombCount)).toBe(3);
+  });
+
+  test('MEGA nie jest nigdy maxed out (można zbierać bez limitu)', async ({ page }) => {
+    await startGame(page);
+    await page.evaluate(() => { megaBombCount = 10; });
+    expect(await page.evaluate(() => isMaxedOut(PU_MEGA))).toBe(false);
+  });
+
+  test('klawisz B stawia mega bombę', async ({ page }) => {
+    await startGame(page);
+    await page.evaluate(() => {
+      megaBombCount = 2;
+      player.bombCooldown = 0;
+      bombsActive = 0;
+      MAX_BOMBS = 2;
+    });
+    const before = await g(page, () => bombs.length);
+    await page.keyboard.down('b');
+    await page.waitForTimeout(150);
+    await page.keyboard.up('b');
+    await page.waitForTimeout(50);
+    const after = await g(page, () => bombs.length);
+    const isMega = await g(page, () => bombs[bombs.length - 1].isMega);
+    expect(after).toBe(before + 1);
+    expect(isMega).toBe(true);
+    expect(await g(page, () => megaBombCount)).toBe(1);
+  });
+
+  test('klawisz B nie działa gdy megaBombCount = 0', async ({ page }) => {
+    await startGame(page);
+    await page.evaluate(() => {
+      megaBombCount = 0;
+      player.bombCooldown = 0;
+      bombsActive = 0;
+    });
+    const before = await g(page, () => bombs.length);
+    await page.keyboard.down('b');
+    await page.waitForTimeout(150);
+    await page.keyboard.up('b');
+    await page.waitForTimeout(50);
+    const after = await g(page, () => bombs.length);
+    expect(after).toBe(before);
+  });
+
+  test('klawisz V aktywuje freeze', async ({ page }) => {
+    await startGame(page);
+    await page.evaluate(() => {
+      freezeCount = 2;
+      freezeTimer = 0;
+    });
+    await page.keyboard.down('v');
+    await page.waitForTimeout(150);
+    await page.keyboard.up('v');
+    await page.waitForTimeout(50);
+    const ft = await g(page, () => freezeTimer);
+    expect(ft).toBeGreaterThan(19);
+    expect(ft).toBeLessThanOrEqual(20);
+    expect(await g(page, () => freezeCount)).toBe(1);
+  });
+
+  test('klawisz V nie działa gdy freezeCount = 0', async ({ page }) => {
+    await startGame(page);
+    await page.evaluate(() => {
+      freezeCount = 0;
+      freezeTimer = 0;
+    });
+    await page.keyboard.down('v');
+    await page.waitForTimeout(150);
+    await page.keyboard.up('v');
+    await page.waitForTimeout(50);
+    expect(await g(page, () => freezeTimer)).toBe(0);
+  });
+
+  test('Spacja stawia zwykłą bombę (nie mega)', async ({ page }) => {
+    await startGame(page);
+    await page.evaluate(() => {
+      megaBombCount = 5;
+      player.bombCooldown = 0;
+      bombsActive = 0;
+      MAX_BOMBS = 1;
+    });
+    await page.keyboard.down('Space');
+    await page.waitForTimeout(150);
+    await page.keyboard.up('Space');
+    await page.waitForTimeout(50);
+    const isMega = await g(page, () => bombs[bombs.length - 1].isMega);
+    expect(isMega).toBe(false);
+    // megaBombCount should not change
+    expect(await g(page, () => megaBombCount)).toBe(5);
+  });
+
+  test('megaBombCount i freezeCount przenoszą się między levelami', async ({ page }) => {
+    await startGame(page);
+    await page.evaluate(() => {
+      megaBombCount = 3;
+      freezeCount = 2;
+    });
+    await killAllRobots(page);
+    await waitForState(page, 'levelcomplete');
+    await page.evaluate(() => {
+      if (summaryCounters) { summaryCounters.done = true; summaryCounters.phase = 3; }
+    });
+    await page.keyboard.press('Enter');
+    await page.waitForFunction(() => state === 'playing', { timeout: 10000 });
+    expect(await g(page, () => megaBombCount)).toBe(3);
+    expect(await g(page, () => freezeCount)).toBe(2);
+  });
+
+  test('megaBombCount i freezeCount resetują się przy nowej grze', async ({ page }) => {
+    await startGame(page);
+    await page.evaluate(() => {
+      megaBombCount = 5;
+      freezeCount = 3;
+    });
+    await page.evaluate(() => { muted = true; musicMuted = true; startNewGame(); });
+    await page.waitForFunction(() => state === 'playing', { timeout: 5000 });
+    expect(await g(page, () => megaBombCount)).toBe(0);
+    expect(await g(page, () => freezeCount)).toBe(0);
+  });
+
+  test('megaBombCount i freezeCount zapisują się i wczytują', async ({ page }) => {
+    await startGame(page);
+    await page.evaluate(() => {
+      megaBombCount = 4;
+      freezeCount = 2;
+      saveGameState();
+    });
+    await page.evaluate(() => {
+      megaBombCount = 0;
+      freezeCount = 0;
+    });
+    await page.evaluate(() => loadGameState());
+    expect(await g(page, () => megaBombCount)).toBe(4);
+    expect(await g(page, () => freezeCount)).toBe(2);
+  });
+
+  test('zamrożone roboty nie zabijają gracza', async ({ page }) => {
+    await startGame(page);
+    await page.evaluate(() => {
+      freezeTimer = 10;
+      player.invince = 0;
+      playerShield = false;
+      player.x = 5 * TILE; player.y = 5 * TILE;
+      robots = [mkRobot(5, 5, RT_BASIC)];
+      robots[0].invince = 0;
+    });
+    await page.waitForTimeout(500);
+    expect(await g(page, () => player.alive)).toBe(true);
   });
 });

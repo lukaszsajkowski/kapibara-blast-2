@@ -2286,7 +2286,7 @@ function update(dt) {
   } else if (state==='playing') {
     levelTime += dt;
     spikesTimer += dt;
-    if (freezeTimer > 0) freezeTimer = Math.max(0, freezeTimer - dt);
+    if (freezeTimer > 0) { freezeTimer = Math.max(0, freezeTimer - dt); hud(); }
     teleportCooldown = Math.max(0, teleportCooldown - dt);
     const wasGhost = playerGhost > 0;
     playerGhost = Math.max(0, playerGhost - dt);
@@ -2815,7 +2815,7 @@ function checkHits() {
       }
       hud();
     }
-    if (p.alive&&p.invince<=0) {
+    if (p.alive&&p.invince<=0&&freezeTimer<=0) {
       const dx=Math.abs(p.x-r.x), dy=Math.abs(p.y-r.y);
       if (dx<TILE*0.55&&dy<TILE*0.55) killPlayer();
     }
