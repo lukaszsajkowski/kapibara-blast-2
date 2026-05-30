@@ -2430,9 +2430,8 @@ function updatePlayer(dt) {
     } else if (bombsActive < MAX_BOMBS) {
       const tx=Math.floor((p.x+TILE/2)/TILE), ty=Math.floor((p.y+TILE/2)/TILE);
       if (!solid(tx,ty,true,playerGhost>0)) {
-        const b = {tx,ty,timer:BOMB_FUSE,sparkT:0,isMega:playerMega,isDetonator:playerDetonator};
+        const b = {tx,ty,timer:BOMB_FUSE,sparkT:0,isMega:false,isDetonator:playerDetonator};
         if (playerDetonator) { b.timer = 9999; detonatorBomb = b; playerDetonator = false; }
-        if (playerMega) { playerMega = false; }
         bombs.push(b);
         bombsActive++;
         p.bombCooldown=0.25;
@@ -2441,6 +2440,31 @@ function updatePlayer(dt) {
         saveGameState();
       }
     }
+  }
+
+  // Plant mega bomb (B key)
+  if ((keys['b']||keys['B']) && p.bombCooldown<=0 && megaBombCount > 0 && bombsActive < MAX_BOMBS) {
+    const tx=Math.floor((p.x+TILE/2)/TILE), ty=Math.floor((p.y+TILE/2)/TILE);
+    if (!solid(tx,ty,true,playerGhost>0)) {
+      const b = {tx,ty,timer:BOMB_FUSE,sparkT:0,isMega:true,isDetonator:false};
+      bombs.push(b);
+      bombsActive++;
+      megaBombCount--;
+      p.bombCooldown=0.25;
+      sfxBombPlace();
+      hud();
+      saveGameState();
+    }
+  }
+
+  // Activate freeze (V key)
+  if ((keys['v']||keys['V']) && freezeCount > 0) {
+    freezeCount--;
+    freezeTimer = 20;
+    sfxFreeze();
+    hud();
+    saveGameState();
+    keys['v']=false; keys['V']=false; // prevent repeat on hold
   }
 
 }
