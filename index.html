@@ -2081,10 +2081,36 @@ function hud() {
   $robots.textContent = robots.filter(r=>r.alive).length;
   let bombTxt = `${bombsActive}/${MAX_BOMBS}`;
   if (playerDetonator) bombTxt += ' 🔴';
-  if (playerMega) bombTxt += ' 💀';
-  $bomb.textContent = bombTxt;
+  $bomb.innerHTML = '';
+  $bomb.appendChild(document.createTextNode(bombTxt + ' '));
+
+  // Mega bomb inventory indicator
+  const megaSpan = document.createElement('span');
+  if (megaBombCount > 0) {
+    megaSpan.textContent = `💀x${megaBombCount}`;
+    megaSpan.style.color = '';
+  } else {
+    megaSpan.textContent = '💀';
+    megaSpan.style.opacity = '0.3';
+  }
+  $bomb.appendChild(megaSpan);
+
+  $bomb.appendChild(document.createTextNode(' '));
+
+  // Freeze inventory indicator
+  const freezeSpan = document.createElement('span');
+  if (freezeCount > 0) {
+    freezeSpan.textContent = `❄x${freezeCount}`;
+    freezeSpan.style.color = '';
+  } else {
+    freezeSpan.textContent = '❄';
+    freezeSpan.style.opacity = '0.3';
+  }
+  $bomb.appendChild(freezeSpan);
+
+  // Active freeze timer
   if (freezeTimer > 0) {
-    $bomb.textContent = bombTxt + ` ❄${Math.ceil(freezeTimer)}s`;
+    $bomb.appendChild(document.createTextNode(` ${Math.ceil(freezeTimer)}s`));
   }
 }
 
