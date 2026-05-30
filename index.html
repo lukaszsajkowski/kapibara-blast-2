@@ -352,7 +352,8 @@ function buildSaveData() {
       playerShield,
       playerGhost,
       playerDetonator,
-      playerMega,
+      megaBombCount,
+      freezeCount,
       teleportCooldown,
       spikesTimer,
       playerSlide,
@@ -412,7 +413,8 @@ function loadGameState() {
     playerShield = !!g.playerShield;
     playerGhost = typeof g.playerGhost === 'number' ? g.playerGhost : 0;
     playerDetonator = !!g.playerDetonator;
-    playerMega = !!g.playerMega;
+    megaBombCount = typeof g.megaBombCount === 'number' ? g.megaBombCount : 0;
+    freezeCount = typeof g.freezeCount === 'number' ? g.freezeCount : 0;
     teleportCooldown = typeof g.teleportCooldown === 'number' ? g.teleportCooldown : 0;
     spikesTimer = typeof g.spikesTimer === 'number' ? g.spikesTimer : 0;
     playerSlide = g.playerSlide && typeof g.playerSlide.dx === 'number' && typeof g.playerSlide.dy === 'number' ? g.playerSlide : null;
@@ -792,7 +794,8 @@ let highScoreSaved = false;    // prevent double-saving
 let playerShield = false;
 let playerGhost = 0;       // timer — walk through crates
 let playerDetonator = false; // next bomb is manual detonation
-let playerMega = false;      // next bomb has full-range
+let megaBombCount = 0;       // mega bombs in inventory
+let freezeCount = 0;         // freeze power-ups in inventory
 let detonatorBomb = null;    // ref to placed detonator bomb
 let teleportCooldown = 0;   // prevent teleport loops
 let spikesTimer = 0;        // global spike cycle timer
@@ -1867,7 +1870,8 @@ function reset() {
   comboCount=0; comboTimer=0;
   bombs=[]; explosions=[]; powerups=[]; particles=[]; floatingTexts=[]; robotDebris=[];
   shake=0; shakeT=0;
-  playerShield=false; playerGhost=0; playerDetonator=false; playerMega=false;
+  playerShield=false; playerGhost=0; playerDetonator=false;
+  megaBombCount=0; freezeCount=0;
   detonatorBomb=null; teleportCooldown=0; spikesTimer=0; playerSlide=null;
   mysteryBoxUsed=false; freezeTimer=0; maxLives=5;
   quizPhase='choice'; quizQuestionIndex=0; quizCorrectCount=0;
@@ -1975,7 +1979,7 @@ function startLevel() {
   bombsActive = 0;
   bombs=[]; explosions=[]; powerups=[]; robotDebris=[];
   detonatorBomb=null; teleportCooldown=0; spikesTimer=0;
-  playerGhost=0; playerShield=false; playerDetonator=false; playerMega=false;
+  playerGhost=0; playerShield=false; playerDetonator=false;
   mysteryBoxUsed = false;
   freezeTimer = 0;
 
