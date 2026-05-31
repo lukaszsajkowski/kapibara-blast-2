@@ -4,6 +4,8 @@ A Bomberman-style arcade browser game where you play as a capybara superhero fig
 
 Built as a single HTML file with vanilla JavaScript and Canvas 2D — zero external dependencies. All graphics are rendered programmatically and all audio is generated procedurally via Web Audio API.
 
+![Gameplay screenshot](screenshot-gameplay.png)
+
 ## Play
 
 Open `index.html` in a browser.
