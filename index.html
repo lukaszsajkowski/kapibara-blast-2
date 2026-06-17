@@ -776,6 +776,7 @@ function toggleMute() {
 let map, player, robots, bombs, explosions, powerups, particles, floatingTexts;
 let robotDebris = []; // for death animation
 let score, lives, state, deathTimer, shake, shakeT;
+let resetReturnState = 'playing'; // state to return to if reset confirmation is cancelled
 let level, levelTimer, levelTime;
 let comboCount, comboTimer;
 let bombsActive = 0;
@@ -3901,6 +3902,7 @@ function draw(t) {
   if (state==='levelintro')    drawLevelIntro();
   if (state==='levelcomplete') drawLevelComplete();
   if (state==='paused')        drawPauseScreen(t);
+  if (state==='confirmreset')  drawConfirmResetScreen(t);
   if (state==='gameover')      drawGameScreen('KONIEC GRY','#ff3030');
   if (state === 'quiz') drawQuizOverlay(t);
 }
@@ -4133,6 +4135,24 @@ function drawPauseScreen(t) {
   ctx.fillStyle='#667';
   ctx.font=`14px 'Courier New'`;
   ctx.fillText('B — MEGA BOMBA (' + megaBombCount + ')    V — ZAMROŻENIE (' + freezeCount + ')', W/2, H/2 + 60);
+}
+
+function drawConfirmResetScreen(t) {
+  ctx.fillStyle='rgba(5,5,15,0.7)';
+  ctx.fillRect(0,0,W,H);
+
+  ctx.textAlign='center';
+  ctx.fillStyle='#ff5050';
+  ctx.font=`900 44px 'Courier New'`;
+  ctx.fillText('ZRESETOWAĆ GRĘ?', W/2, H/2 - 20);
+
+  ctx.fillStyle='#889';
+  ctx.font=`16px 'Courier New'`;
+  ctx.fillText('Stracisz cały postęp', W/2, H/2 + 20);
+
+  ctx.fillStyle='#ffe14d';
+  ctx.font=`bold 18px 'Courier New'`;
+  ctx.fillText('[T] TAK     [N] NIE', W/2, H/2 + 56);
 }
 
 function drawSkinMenu(t) {
@@ -4707,7 +4727,12 @@ window.addEventListener('keydown', e=>{
       return;
     }
     if (e.key==='Escape'||e.key==='p'||e.key==='P') { state='playing'; saveGameState(); }
-    else if (e.key==='r'||e.key==='R') startNewGame();
+    else if (e.key==='r'||e.key==='R') { resetReturnState='paused'; state='confirmreset'; }
+    return;
+  }
+  if (state==='confirmreset') {
+    if (e.key==='t'||e.key==='T'||e.key==='y'||e.key==='Y'||e.key==='Enter') startNewGame();
+    else state = resetReturnState;
     return;
   }
   if (state==='gameover') {
@@ -4733,7 +4758,7 @@ window.addEventListener('keydown', e=>{
   if (state==='playing') {
     if (e.key==='Escape'||e.key==='p'||e.key==='P') { state='paused'; saveGameState(); return; }
   }
-  if (e.key==='r'||e.key==='R') startNewGame();
+  if (e.key==='r'||e.key==='R') { resetReturnState='playing'; state='confirmreset'; }
 });
 window.addEventListener('keyup', e=>{ keys[e.key]=false; });
 

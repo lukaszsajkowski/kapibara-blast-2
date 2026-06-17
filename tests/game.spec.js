@@ -1040,6 +1040,78 @@ test.describe('Maszyna stanów gry', () => {
 });
 
 // ════════════════════════════════════════════════════════════════
+//  RESET CONFIRMATION (klawisz R)
+// ════════════════════════════════════════════════════════════════
+
+test.describe('Potwierdzenie resetu (R)', () => {
+  test('R w trakcie gry otwiera potwierdzenie zamiast resetować', async ({ page }) => {
+    await startGame(page);
+    await page.evaluate(() => { score = 999; });
+    await page.keyboard.press('r');
+    await page.waitForTimeout(100);
+    expect(await g(page, () => state)).toBe('confirmreset');
+    expect(await g(page, () => resetReturnState)).toBe('playing');
+    // Progres nie został utracony
+    expect(await g(page, () => score)).toBe(999);
+  });
+
+  test('R na pauzie otwiera potwierdzenie z powrotem do pauzy', async ({ page }) => {
+    await startGame(page);
+    await page.keyboard.press('Escape');
+    await waitForState(page, 'paused');
+    await page.keyboard.press('r');
+    await page.waitForTimeout(100);
+    expect(await g(page, () => state)).toBe('confirmreset');
+    expect(await g(page, () => resetReturnState)).toBe('paused');
+  });
+
+  test('T potwierdza reset gry', async ({ page }) => {
+    await startGame(page);
+    await page.evaluate(() => { score = 999; level = 3; });
+    await page.keyboard.press('r');
+    await waitForState(page, 'confirmreset');
+    await page.keyboard.press('t');
+    await page.waitForFunction(() => state === 'playing', { timeout: 5000 });
+    expect(await g(page, () => score)).toBe(0);
+    expect(await g(page, () => level)).toBe(1);
+  });
+
+  test('Enter potwierdza reset gry', async ({ page }) => {
+    await startGame(page);
+    await page.evaluate(() => { score = 999; });
+    await page.keyboard.press('r');
+    await waitForState(page, 'confirmreset');
+    await page.keyboard.press('Enter');
+    await page.waitForFunction(() => state === 'playing', { timeout: 5000 });
+    expect(await g(page, () => score)).toBe(0);
+  });
+
+  test('N anuluje i wraca do gry bez resetu', async ({ page }) => {
+    await startGame(page);
+    await page.evaluate(() => { score = 999; });
+    await page.keyboard.press('r');
+    await waitForState(page, 'confirmreset');
+    await page.keyboard.press('n');
+    await page.waitForTimeout(100);
+    expect(await g(page, () => state)).toBe('playing');
+    expect(await g(page, () => score)).toBe(999);
+  });
+
+  test('Esc anuluje i wraca do pauzy bez resetu', async ({ page }) => {
+    await startGame(page);
+    await page.evaluate(() => { score = 999; });
+    await page.keyboard.press('Escape');
+    await waitForState(page, 'paused');
+    await page.keyboard.press('r');
+    await waitForState(page, 'confirmreset');
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(100);
+    expect(await g(page, () => state)).toBe('paused');
+    expect(await g(page, () => score)).toBe(999);
+  });
+});
+
+// ════════════════════════════════════════════════════════════════
 //  DIFFICULTY SCALING
 // ════════════════════════════════════════════════════════════════
 
